@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "skill-arena"
+version = "0.1.0"
+description = "Cross-vendor coding agent & SKILL.md scientific A/B benchmark harness with isolated git worktrees, loopback token wire-tap, deterministic anti-cheat graders, and dual-track trajectory replay."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+  { name = "zxu756" }
+]
+keywords = [
+  "coding-agents",
+  "benchmark",
+  "evals",
+  "skills",
+  "claude-code",
+  "codex",
+  "opencode",
+  "git-worktree",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.scripts]
+skill-arena = "skill_arena.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skill_arena"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
