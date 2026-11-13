@@ -250,6 +250,7 @@ class LeaderboardSummary:
     context_overhead_delta_tokens: int
     median_latency_ms: int
     anti_cheat_integrity_rate: float
+    elo_rating: int = 1500
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

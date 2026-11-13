@@ -8,9 +8,11 @@ from pathlib import Path
 import subprocess
 import urllib.request
 
-from skill_arena.cli import run_ab_experiment
+from skill_arena import __version__
+from skill_arena.cli import main, run_ab_experiment
 from skill_arena.extractor.git_commit_extractor import extract_task_from_commit
 from skill_arena.graders.deterministic import evaluate_sandbox
+from skill_arena.i18n import resolve_html_lang_mode, resolve_lang
 from skill_arena.models import ContenderConfig
 from skill_arena.runners.harness_driver import HarnessDriver
 from skill_arena.runners.wire_tap_proxy import LoopbackWireTapProxy, _extract_usage_from_sse
@@ -238,6 +240,109 @@ def test_full_ab_experiment_db_studio_and_html_export(tmp_path: Path) -> None:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/comparison/{exp_id}", timeout=5) as resp:
             api_json = json.loads(resp.read().decode("utf-8"))
             assert api_json["experiment_id"] == exp_id
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/?lang=zh", timeout=5) as resp_zh:
+            studio_zh = resp_zh.read().decode("utf-8")
+            assert 'lang="zh-CN"' in studio_zh
+            assert "参赛智能体 A/B 排行榜" in studio_zh
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_version_and_bilingual_lang_resolution() -> None:
+    assert __version__ == "0.2.0"
+
+    # Explicit CLI flag overrides env and locale
+    assert resolve_lang("zh", {"SKILL_ARENA_LANG": "en", "LC_ALL": "en_US.UTF-8"}) == "zh"
+    assert resolve_lang("en", {"SKILL_ARENA_LANG": "zh", "LC_ALL": "zh_CN.UTF-8"}) == "en"
+
+    # SKILL_ARENA_LANG overrides POSIX locale when CLI is auto
+    assert resolve_lang("auto", {"SKILL_ARENA_LANG": "zh_CN", "LC_ALL": "en_US.UTF-8"}) == "zh"
+    assert resolve_lang("auto", {"SKILL_ARENA_LANG": "en", "LC_ALL": "zh_CN.UTF-8"}) == "en"
+
+    # System locale zh* auto-detection
+    assert resolve_lang("auto", {"LC_ALL": "zh_CN.UTF-8"}) == "zh"
+    assert resolve_lang("auto", {"LANG": "zh_Hans_CN.UTF-8"}) == "zh"
+    assert resolve_lang("auto", {"LANG": "en_US.UTF-8"}) == "en"
+    assert resolve_lang("auto", {}) == "en"
+
+    assert resolve_html_lang_mode("zh", {}) == ("zh", "zh")
+    assert resolve_html_lang_mode("en", {}) == ("en", "en")
+    assert resolve_html_lang_mode("auto", {"LANG": "en_US.UTF-8"}) == ("en", "auto")
+    assert resolve_html_lang_mode("auto", {"LC_ALL": "zh_CN.UTF-8"}) == ("zh", "zh")
+
+
+def test_cli_and_html_bilingual_zh_en_outputs(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("SKILL_ARENA_LANG", "")
+    monkeypatch.setenv("LC_ALL", "en_US.UTF-8")
+
+    # 1. list-suites in Chinese & English (testing --lang both before and after subcommand)
+    rc_zh = main(["--lang", "zh", "list-suites", "--category", "concurrency"])
+    assert rc_zh == 0
+    out_zh = capsys.readouterr().out
+    assert "并发控制" in out_zh
+    assert "TokenBucket" in out_zh
+
+    rc_en = main(["list-suites", "--lang", "en", "--category", "concurrency"])
+    assert rc_en == 0
+    out_en = capsys.readouterr().out
+    assert "[concurrency" in out_en
+    assert "Thread-safe TokenBucket burst" in out_en
+
+    # 2. compare & export-html in Chinese and English
+    db_path = tmp_path / "bilingual.sqlite"
+    db = ArenaDatabase(db_path)
+    tasks = load_builtin_suite()[:2]
+    contenders = [
+        ContenderConfig(contender_id="ctrl", label="Baseline No Skill", role="control", cli="mock:baseline"),
+        ContenderConfig(contender_id="treat", label="Treatment + Curated Engineering Skills", role="treatment", cli="mock:skilled"),
+    ]
+    exp_id = run_ab_experiment(
+        db=db,
+        title="Control vs SKILL.md A/B Evaluation",
+        suite_name="subset-2",
+        tasks=tasks,
+        contenders=contenders,
+        k_reps=2,
+        quiet=True,
+        lang="zh",
+    )
+
+    assert main(["compare", "--lang", "zh", "--db", str(db_path), "--exp", exp_id]) == 0
+    cmp_zh = capsys.readouterr().out
+    assert "参赛组别" in cmp_zh
+    assert "对照组" in cmp_zh
+    assert "实验组" in cmp_zh
+    assert "BT Elo" in cmp_zh
+
+    assert main(["--lang", "en", "compare", "--db", str(db_path), "--exp", exp_id]) == 0
+    cmp_en = capsys.readouterr().out
+    assert "Contender" in cmp_en
+    assert "control" in cmp_en
+    assert "treatment" in cmp_en
+    assert "BT Elo" in cmp_en
+
+    report = db.build_comparison_report(exp_id)
+    lb = {r["contender_id"]: r for r in report["leaderboard"]}
+    assert lb["ctrl"]["elo_rating"] == 1500
+    assert lb["treat"]["elo_rating"] >= 1500
+
+    html_zh = render_arena_html(report, lang="zh")
+    assert 'lang="zh-CN"' in html_zh
+    assert 'data-default-lang="zh"' in html_zh
+    assert 'data-lang-switch="zh"' in html_zh
+    assert 'data-lang-switch="en"' in html_zh
+    assert "参赛智能体 A/B 排行榜" in html_zh
+    assert "逐任务 Worktree 沙盒遥测矩阵" in html_zh
+    assert 'data-task-filter="concurrency"' in html_zh
+    assert "BT Elo" in html_zh
+    assert "\u2014" not in html_zh
+    assert "\u2013" not in html_zh
+
+    html_en = render_arena_html(report, lang="en")
+    assert 'lang="en"' in html_en
+    assert 'data-default-lang="en"' in html_en
+    assert "Contender A/B scoreboard" in html_en
+    assert "Dual-track trajectory replay" in html_en
+    assert "\u2014" not in html_en
+    assert "\u2013" not in html_en

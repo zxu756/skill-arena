@@ -1,4 +1,4 @@
-"""Swiss Newsprint & Motorsport Telemetry single-file HTML compiler for SkillArena."""
+"""Swiss Newsprint & Motorsport Telemetry single-file bilingual HTML compiler for SkillArena."""
 
 from __future__ import annotations
 
@@ -6,6 +6,14 @@ import html
 import json
 from pathlib import Path
 from typing import Any
+
+from skill_arena.i18n import (
+    CATEGORY_ZH,
+    TASK_TITLE_ZH,
+    localize_category,
+    localize_task_title,
+    resolve_html_lang_mode,
+)
 
 
 def _clean_prose(text: str) -> str:
@@ -27,16 +35,50 @@ def _fmt_usd(val: float | None) -> str:
     return f"${val:.4f}"
 
 
-def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") -> str:
-    """Compile a self-contained zero-dependency HTML scoreboard and dual-track trajectory replay."""
-    title = _clean_prose(str(report.get("title", "SkillArena Benchmark Report")))
+def _localize_title(raw_title: str, lang: str) -> str:
+    if lang != "zh":
+        return raw_title
+    known = {
+        "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills": (
+            "Claude Sonnet 4.5：无技能基线 对比 精选工程与 Hallmark 技能包"
+        ),
+        "Control vs SKILL.md A/B Evaluation": "对照组 对比 SKILL.md 技能包 A/B 评测",
+        "SkillArena Benchmark Report": "SkillArena 基准评测报告",
+    }
+    return known.get(raw_title, raw_title)
+
+
+def _localize_arm_label(label: str, lang: str) -> str:
+    if lang != "zh":
+        return label
+    return (
+        label.replace("No Skill", "无技能基线")
+        .replace("+ Curated Engineering Skills", "+ 精选工程技能包")
+    )
+
+
+def render_arena_html(
+    report: dict[str, Any],
+    default_view: str = "scoreboard",
+    lang: str = "auto",
+) -> str:
+    """Compile a self-contained zero-dependency bilingual HTML scoreboard & trajectory replay."""
+    render_lang, default_lang_attr = resolve_html_lang_mode(lang)
+    is_zh = render_lang == "zh"
+    html_lang_attr = "zh-CN" if is_zh else "en"
+
+    raw_title = _clean_prose(str(report.get("title", "SkillArena Benchmark Report")))
+    disp_title = _localize_title(raw_title, render_lang)
     exp_id = str(report.get("experiment_id", "exp_local"))
     suite_name = str(report.get("suite_name", "builtin-8"))
     k_reps = int(report.get("k_reps", 3))
     leaderboard: list[dict[str, Any]] = list(report.get("leaderboard", []))
     task_matrix: list[dict[str, Any]] = list(report.get("task_matrix", []))
 
-    control = next((r for r in leaderboard if r.get("role") == "control"), leaderboard[0] if leaderboard else {})
+    control = next(
+        (r for r in leaderboard if r.get("role") == "control"),
+        leaderboard[0] if leaderboard else {},
+    )
     treatment = next(
         (r for r in leaderboard if r.get("role") == "treatment"),
         leaderboard[1] if len(leaderboard) > 1 else control,
@@ -50,19 +92,26 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
     c_cps = control.get("cost_per_success_usd")
     t_cps = treatment.get("cost_per_success_usd")
     overhead_tok = int(treatment.get("context_overhead_delta_tokens", 0))
-    min_integrity = min((float(r.get("anti_cheat_integrity_rate", 1.0)) for r in leaderboard), default=1.0)
+    min_integrity = min(
+        (float(r.get("anti_cheat_integrity_rate", 1.0)) for r in leaderboard),
+        default=1.0,
+    )
 
     # Server-rendered scoreboard rows for instant zero-JS readability & SEO/sloplint
     lb_rows_html: list[str] = []
     for row in leaderboard:
         is_treat = row.get("role") == "treatment"
         badge_cls = "arm-pill-treatment" if is_treat else "arm-pill-control"
-        role_txt = "Treatment" if is_treat else "Control"
-        skills_txt = ", ".join(row.get("skills_mounted") or []) or "None (stripped)"
+        role_txt = ("实验组" if is_treat else "对照组") if is_zh else ("Treatment" if is_treat else "Control")
+        none_txt = "无（已剥离）" if is_zh else "None (stripped)"
+        skills_txt = ", ".join(row.get("skills_mounted") or []) or none_txt
         ovh = int(row.get("context_overhead_delta_tokens", 0))
-        ovh_txt = f"+{ovh:,} tok" if ovh > 0 else (f"{ovh:,} tok" if ovh < 0 else "0 tok (baseline)")
+        base_tok_txt = "0 tok（基线）" if is_zh else "0 tok (baseline)"
+        ovh_txt = f"+{ovh:,} tok" if ovh > 0 else (f"{ovh:,} tok" if ovh < 0 else base_tok_txt)
+        elo_val = int(row.get("elo_rating", 1500))
         integrity_pct = float(row.get("anti_cheat_integrity_rate", 1.0))
         int_cls = "status-ok" if integrity_pct >= 0.999 else "status-fail"
+        arm_lbl = _localize_arm_label(_clean_prose(str(row.get("label", ""))), render_lang)
 
         lb_rows_html.append(
             f"""
@@ -71,12 +120,13 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
                 <div class="arm-cell">
                   <span class="arm-pill {badge_cls}">{html.escape(role_txt)}</span>
                   <div>
-                    <div class="arm-name">{html.escape(_clean_prose(str(row.get("label", ""))))}</div>
+                    <div class="arm-name">{html.escape(arm_lbl)}</div>
                     <div class="arm-meta">{html.escape(str(row.get("cli", "")))} · {html.escape(str(row.get("model", "")))}</div>
                   </div>
                 </div>
               </td>
               <td class="mono">{html.escape(skills_txt)}</td>
+              <td class="mono strong">{elo_val}</td>
               <td class="mono strong">{_fmt_pct(float(row.get("pass_at_1", 0.0)))}</td>
               <td class="mono">{_fmt_pct(float(row.get("pass_hat_k", 0.0)))}</td>
               <td class="mono">{_fmt_usd(row.get("cost_per_success_usd"))}</td>
@@ -93,8 +143,10 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
     matrix_rows_html: list[str] = []
     for idx, item in enumerate(task_matrix):
         tid = str(item["task_id"])
-        ttitle = _clean_prose(str(item["title"]))
+        raw_ttitle = _clean_prose(str(item["title"]))
+        ttitle = localize_task_title(tid, raw_ttitle, render_lang)
         tcat = str(item["category"])
+        tcat_disp = localize_category(tcat, render_lang)
         c_arm = item["arms"].get(c_id, {})
         t_arm = item["arms"].get(t_id, {})
 
@@ -106,45 +158,149 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
         c_cls = "verdict-pass" if c_p == c_tot and c_tot > 0 else ("verdict-flaky" if c_p > 0 else "verdict-fail")
         t_cls = "verdict-pass" if t_p == t_tot and t_tot > 0 else ("verdict-flaky" if t_p > 0 else "verdict-fail")
 
+        pass_word = "通过" if is_zh else "pass"
         delta_val = t_p - c_p
         if delta_val > 0:
-            delta_badge = f'<span class="delta-tag delta-win">+{delta_val}/{t_tot} gain</span>'
+            gain_txt = f"+{delta_val}/{t_tot} 净提升" if is_zh else f"+{delta_val}/{t_tot} gain"
+            delta_badge = f'<span class="delta-tag delta-win">{gain_txt}</span>'
         elif delta_val < 0:
-            delta_badge = f'<span class="delta-tag delta-reg">{delta_val}/{t_tot} regressed</span>'
+            reg_txt = f"{delta_val}/{t_tot} 退化" if is_zh else f"{delta_val}/{t_tot} regressed"
+            delta_badge = f'<span class="delta-tag delta-reg">{reg_txt}</span>'
         else:
-            delta_badge = '<span class="delta-tag delta-tie">Parity</span>'
+            tie_txt = "持平" if is_zh else "Parity"
+            delta_badge = f'<span class="delta-tag delta-tie">{tie_txt}</span>'
+
+        domain_line = f"所属领域：{tcat_disp}" if is_zh else f"Suite domain: {tcat_disp}"
+        btn_inspect = "查看双轨回放" if is_zh else "Inspect dual replay"
 
         matrix_rows_html.append(
             f"""
-            <tr>
+            <tr data-task-cat="{html.escape(tcat)}" data-task-gain="{1 if delta_val > 0 else 0}">
               <td class="mono task-id-col">{html.escape(tid)}</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">{html.escape(ttitle)}</div>
-                <div class="task-cat-text">Suite domain: {html.escape(tcat)}</div>
+                <div class="task-cat-text">{html.escape(domain_line)}</div>
               </td>
-              <td class="mono"><span class="verdict-pill {c_cls}">{c_p}/{c_tot} pass</span> · ${float(c_arm.get("mean_cost_usd", 0.0)):.4f}</td>
-              <td class="mono"><span class="verdict-pill {t_cls}">{t_p}/{t_tot} pass</span> · ${float(t_arm.get("mean_cost_usd", 0.0)):.4f}</td>
+              <td class="mono"><span class="verdict-pill {c_cls}">{c_p}/{c_tot} {pass_word}</span> · ${float(c_arm.get("mean_cost_usd", 0.0)):.4f}</td>
+              <td class="mono"><span class="verdict-pill {t_cls}">{t_p}/{t_tot} {pass_word}</span> · ${float(t_arm.get("mean_cost_usd", 0.0)):.4f}</td>
               <td class="mono">{delta_badge}</td>
               <td>
-                <button type="button" class="inspect-btn" data-replay-index="{idx}">Inspect dual replay</button>
+                <button type="button" class="inspect-btn" data-replay-index="{idx}">{btn_inspect}</button>
               </td>
             </tr>
             """
         )
 
     safe_json = _clean_prose(json.dumps(report, ensure_ascii=True)).replace("</", "<\\/")
+    zh_titles_json = _clean_prose(json.dumps(TASK_TITLE_ZH, ensure_ascii=False)).replace("</", "<\\/")
+    zh_cats_json = _clean_prose(json.dumps(CATEGORY_ZH, ensure_ascii=False)).replace("</", "<\\/")
+
     score_active = "is-active" if default_view != "replay" else ""
     replay_active = "is-active" if default_view == "replay" else ""
     score_hidden = "hidden" if default_view == "replay" else ""
     replay_hidden = "" if default_view == "replay" else "hidden"
 
+    zh_active = "is-active" if is_zh else ""
+    en_active = "" if is_zh else "is-active"
+    zh_pressed = "true" if is_zh else "false"
+    en_pressed = "false" if is_zh else "true"
+
+    doc_title = (
+        f"SkillArena 遥测看板：{disp_title}"
+        if is_zh
+        else f"SkillArena Telemetry: {disp_title}"
+    )
+    brand_sub = (
+        "Git Worktree 隔离沙盒 A/B 评测与流量监听遥测"
+        if is_zh
+        else "Git-worktree A/B benchmark & wire-tap token telemetry"
+    )
+    tab_score_txt = "排行榜与成本效能" if is_zh else "Scoreboard & economics"
+    tab_replay_txt = "双轨轨迹与补丁回放" if is_zh else "Dual-track trajectory replay"
+    theme_btn_txt = "深色遥测主题" if is_zh else "Switch telemetry theme"
+    exp_meta_txt = (
+        f"实验编号 {exp_id} · 评测集：{suite_name}（{len(task_matrix)} 项任务 x {k_reps} 轮独立 Worktree 重复）"
+        if is_zh
+        else f"Experiment {exp_id} · Suite: {suite_name} ({len(task_matrix)} tasks x {k_reps} isolated worktree reps)"
+    )
+    grader_note_txt = (
+        "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验"
+        if is_zh
+        else "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders"
+    )
+
+    kpi1_lbl = "实验组 Pass@1 净提升" if is_zh else "Treatment Pass@1 lift"
+    kpi1_foot = (
+        f"对照组 {_fmt_pct(c_pass1)} 对比 实验组 {_fmt_pct(t_pass1)}"
+        if is_zh
+        else f"Control {_fmt_pct(c_pass1)} vs Treatment {_fmt_pct(t_pass1)}"
+    )
+    kpi2_lbl = "单次成功真实摊销成本" if is_zh else "True cost per success"
+    kpi2_foot = (
+        f"对照组摊销：{_fmt_usd(c_cps)}（含失败重试损耗）"
+        if is_zh
+        else f"Control amortized: {_fmt_usd(c_cps)} (failed retries included)"
+    )
+    kpi3_lbl = "首轮技能上下文税" if is_zh else "Turn-1 skill context tax"
+    kpi3_foot = (
+        "首次请求注入的 SKILL.md 提示词增量"
+        if is_zh
+        else "Prompt delta injected on initial request"
+    )
+    kpi4_lbl = "防作弊测试完整性" if is_zh else "Anti-cheat test integrity"
+    kpi4_foot = (
+        "受保护测试文件运行后 SHA-256 校验通过"
+        if is_zh
+        else "Protected test SHA-256 verified post-run"
+    )
+
+    sb_heading = "参赛智能体 A/B 排行榜" if is_zh else "Contender A/B scoreboard"
+    sb_note = (
+        f"Bradley-Terry Elo 与 Pass^{k_reps}（单任务需连续 {k_reps}/{k_reps} 次全绿通过）"
+        if is_zh
+        else f"Bradley-Terry Elo & Pass^{k_reps} ({k_reps}/{k_reps} consecutive clean passes per task)"
+    )
+    th_arm = "参赛组别" if is_zh else "Contender arm"
+    th_skill = "挂载技能" if is_zh else "Mounted SKILL.md"
+    th_elo = "BT Elo"
+    th_pass1 = "Pass@1"
+    th_passk = f"Pass^{k_reps} 稳健率" if is_zh else f"Pass^{k_reps} consistency"
+    th_cps = "单次成功成本" if is_zh else "Cost / success"
+    th_delta = "首轮上下文增量" if is_zh else "Turn-1 context delta"
+    th_lat = "中位耗时" if is_zh else "Median latency"
+    th_int = "防作弊完整性" if is_zh else "Test integrity"
+
+    mat_heading = "逐任务 Worktree 沙盒遥测矩阵" if is_zh else "Task-by-task worktree telemetry matrix"
+    f_all = "全部" if is_zh else "All"
+    f_gains = "技能净胜" if is_zh else "Skill gains"
+    f_conc = "并发控制" if is_zh else "Concurrency"
+    f_ui = "前端工艺" if is_zh else "Frontend craft"
+    f_refac = "重构测试" if is_zh else "Refactor"
+    f_sec = "安全加固" if is_zh else "Security"
+
+    ctrl_hdr_lbl = _localize_arm_label(_clean_prose(str(control.get("label", "Baseline"))), render_lang)
+    treat_hdr_lbl = _localize_arm_label(_clean_prose(str(treatment.get("label", "Skilled"))), render_lang)
+    mth_id = "任务 ID" if is_zh else "Task ID"
+    mth_spec = "工程基准测试规范" if is_zh else "Engineering benchmark specification"
+    mth_ctrl = f"对照组 ({ctrl_hdr_lbl})" if is_zh else f"Control ({ctrl_hdr_lbl})"
+    mth_treat = f"实验组 ({treat_hdr_lbl})" if is_zh else f"Treatment ({treat_hdr_lbl})"
+    mth_delta = "结果净变化" if is_zh else "Outcome delta"
+    mth_traj = "双轨回放" if is_zh else "Trajectory"
+
+    rep_task_lbl = "基准测试任务：" if is_zh else "Benchmark task:"
+    rf_both = "轨迹与补丁" if is_zh else "Steps & diff"
+    rf_steps = "仅执行轨迹" if is_zh else "Steps only"
+    rf_diff = "仅代码补丁" if is_zh else "Worktree diff"
+    rep_cursor_lbl = "同步步骤游标：" if is_zh else "Synchronized step cursor:"
+    rep_step_init = "第 3 步" if is_zh else "Step 3"
+
     return f"""<!doctype html>
-<html lang="en" data-theme="newsprint">
+<html lang="{html_lang_attr}" data-theme="newsprint" data-default-lang="{default_lang_attr}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="SkillArena controlled git-worktree A/B benchmark telemetry and dual-track trajectory replay.">
-  <title>SkillArena Telemetry: {html.escape(title)}</title>
+  <title>{html.escape(doc_title)}</title>
   <style>
     /* Hallmark · v2.0.0 | theme: swiss-newsprint-telemetry (custom) | genre: editorial | scope: app | signature: dual-track synchronized trajectory replay */
     /* critique: warm newsprint scoreboard paired with motorsport telemetry rules, tabular figures, and zero nested card chrome */
@@ -165,7 +321,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       --arm-regression-soft: rgba(201, 59, 34, 0.12);
       --arm-amber: #9E5C11;
       --arm-amber-soft: rgba(158, 92, 17, 0.12);
-      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
       --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     }}
 
@@ -207,6 +363,8 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       color: var(--ink-primary);
       text-wrap: balance;
       letter-spacing: -0.02em;
+      overflow-wrap: break-word;
+      min-width: 0;
     }}
 
     .mono {{
@@ -224,12 +382,14 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+      flex-wrap: wrap;
     }}
 
     .brand-cluster {{
       display: flex;
       align-items: baseline;
       gap: 12px;
+      min-width: 0;
     }}
 
     .brand-mark {{
@@ -248,6 +408,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
     }}
 
     .tab-btn, .ghost-btn, .inspect-btn {{
@@ -256,6 +417,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       background: var(--bg-inset);
       color: var(--ink-primary);
       padding: 8px 12px;
+      font-family: var(--font-sans);
       font-size: 12.5px;
       font-weight: 600;
       border-radius: 6px;
@@ -263,16 +425,67 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       cursor: pointer;
     }}
 
-    .tab-btn:focus-visible, .ghost-btn:focus-visible, .inspect-btn:focus-visible, .replay-select:focus-visible, input:focus-visible {{
+    .lang-switch {{
+      display: inline-flex;
+      align-items: center;
+      padding: 4px;
+      background: var(--bg-inset);
+      border-radius: 999px;
+      gap: 4px;
+    }}
+
+    .lang-btn {{
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--ink-secondary);
+      padding: 4px 12px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 650;
+      border-radius: 999px;
+      white-space: nowrap;
+      cursor: pointer;
+    }}
+
+    .lang-sep {{
+      color: var(--ink-muted);
+      font-size: 11px;
+      user-select: none;
+    }}
+
+    .filter-bar {{
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }}
+
+    .filter-pill {{
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--ink-secondary);
+      padding: 4px 8px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 4px;
+      white-space: nowrap;
+      cursor: pointer;
+    }}
+
+    .tab-btn:focus-visible, .ghost-btn:focus-visible, .inspect-btn:focus-visible,
+    .filter-pill:focus-visible, .lang-btn:focus-visible, .replay-select:focus-visible, input:focus-visible {{
       outline: 2px solid var(--arm-control);
       outline-offset: 2px;
     }}
 
-    .tab-btn:active, .ghost-btn:active, .inspect-btn:active {{
+    .tab-btn:active, .ghost-btn:active, .inspect-btn:active, .filter-pill:active, .lang-btn:active {{
       transform: translateY(1px);
     }}
 
-    .tab-btn:disabled, .ghost-btn:disabled, .inspect-btn:disabled {{
+    .tab-btn:disabled, .ghost-btn:disabled, .inspect-btn:disabled, .filter-pill:disabled, .lang-btn:disabled {{
       opacity: 0.48;
       cursor: not-allowed;
     }}
@@ -283,6 +496,16 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       border-color: var(--ink-primary);
     }}
 
+    .lang-btn.is-active {{
+      background: var(--ink-primary);
+      color: var(--bg-surface);
+    }}
+
+    .filter-pill.is-active {{
+      background: var(--bg-inset);
+      color: var(--ink-primary);
+    }}
+
     .inspect-btn {{
       padding: 4px 12px;
       font-size: 12px;
@@ -291,6 +514,14 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
 
     .inspect-btn:hover, .ghost-btn:hover {{
       border-color: var(--line-strong);
+    }}
+
+    .filter-pill:hover, .lang-btn:hover {{
+      color: var(--ink-primary);
+    }}
+
+    .lang-btn.is-active:hover {{
+      color: var(--bg-surface);
     }}
 
     .page-shell {{
@@ -309,6 +540,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       gap: 16px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--line-hairline);
+      flex-wrap: wrap;
     }}
 
     .exp-banner h1 {{
@@ -334,6 +566,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       padding: 16px 20px;
       border-right: 1px solid var(--line-hairline);
       color: var(--ink-primary);
+      min-width: 0;
     }}
 
     .kpi-cell:last-child {{ border-right: none; }}
@@ -375,6 +608,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      flex-wrap: wrap;
     }}
 
     .panel-head h2 {{
@@ -421,6 +655,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       border-radius: 4px;
       font-size: 11.5px;
       font-weight: 700;
+      white-space: nowrap;
     }}
 
     .arm-pill-control {{
@@ -446,6 +681,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       border-radius: 4px;
       font-size: 11.5px;
       font-weight: 650;
+      white-space: nowrap;
     }}
 
     .verdict-pass, .delta-win, .status-ok {{
@@ -480,14 +716,16 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
     }}
 
     .replay-select {{
-      padding: 8px 12px;
+      padding: 8px 32px 8px 12px;
       border-radius: 6px;
       border: 1px solid var(--line-strong);
       background: var(--bg-surface);
       color: var(--ink-primary);
+      font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 600;
-      min-width: 340px;
+      min-width: 320px;
+      max-width: 760px;
     }}
 
     .scrubber-group {{
@@ -509,6 +747,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       flex-direction: column;
       gap: 16px;
       color: var(--ink-primary);
+      min-width: 0;
     }}
 
     .track-col:first-child {{
@@ -519,6 +758,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
       padding-bottom: 12px;
       border-bottom: 2px solid var(--arm-control);
     }}
@@ -556,7 +796,7 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
     }}
 
     .step-title {{ font-weight: 650; font-size: 13px; }}
-    .step-metrics {{ font-size: 11.5px; color: var(--ink-muted); }}
+    .step-metrics {{ font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }}
     .step-detail {{ font-size: 12.5px; color: var(--ink-secondary); }}
 
     .diff-box {{
@@ -577,75 +817,85 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       .kpi-strip {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .dual-grid {{ grid-template-columns: 1fr; }}
     }}
+
+    @media (prefers-reduced-motion: reduce) {{
+      .tab-btn, .ghost-btn, .inspect-btn, .filter-pill, .lang-btn {{
+        transform: none !important;
+      }}
+    }}
   </style>
 </head>
 <body>
   <header class="topbar">
     <div class="brand-cluster">
       <div class="brand-mark">SkillArena</div>
-      <div class="brand-sub">Git-worktree A/B benchmark &amp; wire-tap token telemetry</div>
+      <div class="brand-sub" id="brand-sub">{html.escape(brand_sub)}</div>
     </div>
     <nav class="nav-actions" aria-label="Workspace views">
-      <button type="button" id="btn-view-scoreboard" class="tab-btn {score_active}">Scoreboard &amp; economics</button>
-      <button type="button" id="btn-view-replay" class="tab-btn {replay_active}">Dual-track trajectory replay</button>
-      <button type="button" id="btn-theme-toggle" class="ghost-btn">Switch telemetry theme</button>
+      <button type="button" id="btn-view-scoreboard" class="tab-btn {score_active}">{html.escape(tab_score_txt)}</button>
+      <button type="button" id="btn-view-replay" class="tab-btn {replay_active}">{html.escape(tab_replay_txt)}</button>
+      <div class="lang-switch" id="lang-switcher" role="group" aria-label="中文 / EN language switcher">
+        <button type="button" class="lang-btn {zh_active}" data-lang-switch="zh" aria-pressed="{zh_pressed}">中文</button>
+        <span class="lang-sep" aria-hidden="true">|</span>
+        <button type="button" class="lang-btn {en_active}" data-lang-switch="en" aria-pressed="{en_pressed}">EN</button>
+      </div>
+      <button type="button" id="btn-theme-toggle" class="ghost-btn">{html.escape(theme_btn_txt)}</button>
     </nav>
   </header>
 
   <main class="page-shell">
     <section class="exp-banner">
       <div>
-        <h1>{html.escape(title)}</h1>
-        <div class="exp-meta-line mono">
-          Experiment {html.escape(exp_id)} · Suite: {html.escape(suite_name)} ({len(task_matrix)} tasks x {k_reps} isolated worktree reps)
-        </div>
+        <h1 id="exp-title">{html.escape(disp_title)}</h1>
+        <div class="exp-meta-line mono" id="exp-meta-line">{html.escape(exp_meta_txt)}</div>
       </div>
-      <div class="mono panel-note">Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders</div>
+      <div class="mono panel-note" id="grader-note">{html.escape(grader_note_txt)}</div>
     </section>
 
     <section class="kpi-strip" aria-label="Headline experiment metrics">
       <div class="kpi-cell">
-        <div class="kpi-label">Treatment Pass@1 lift</div>
-        <div class="kpi-val mono tone-win">{html.escape(lift_str)}</div>
-        <div class="kpi-foot mono">Control {_fmt_pct(c_pass1)} vs Treatment {_fmt_pct(t_pass1)}</div>
+        <div class="kpi-label" id="kpi1-lbl">{html.escape(kpi1_lbl)}</div>
+        <div class="kpi-val mono tone-win" id="kpi1-val">{html.escape(lift_str)}</div>
+        <div class="kpi-foot mono" id="kpi1-foot">{html.escape(kpi1_foot)}</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">True cost per success</div>
-        <div class="kpi-val mono tone-ctrl">{_fmt_usd(t_cps)}</div>
-        <div class="kpi-foot mono">Control amortized: {_fmt_usd(c_cps)} (failed retries included)</div>
+        <div class="kpi-label" id="kpi2-lbl">{html.escape(kpi2_lbl)}</div>
+        <div class="kpi-val mono tone-ctrl" id="kpi2-val">{_fmt_usd(t_cps)}</div>
+        <div class="kpi-foot mono" id="kpi2-foot">{html.escape(kpi2_foot)}</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">Turn-1 skill context tax</div>
-        <div class="kpi-val mono tone-amber">{overhead_tok:+,d} tok</div>
-        <div class="kpi-foot mono">Prompt delta injected on initial request</div>
+        <div class="kpi-label" id="kpi3-lbl">{html.escape(kpi3_lbl)}</div>
+        <div class="kpi-val mono tone-amber" id="kpi3-val">{overhead_tok:+,d} tok</div>
+        <div class="kpi-foot mono" id="kpi3-foot">{html.escape(kpi3_foot)}</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">Anti-cheat test integrity</div>
-        <div class="kpi-val mono">{_fmt_pct(min_integrity)}</div>
-        <div class="kpi-foot mono">Protected test SHA-256 verified post-run</div>
+        <div class="kpi-label" id="kpi4-lbl">{html.escape(kpi4_lbl)}</div>
+        <div class="kpi-val mono" id="kpi4-val">{_fmt_pct(min_integrity)}</div>
+        <div class="kpi-foot mono" id="kpi4-foot">{html.escape(kpi4_foot)}</div>
       </div>
     </section>
 
     <div id="view-scoreboard" {score_hidden}>
       <section class="panel" style="margin-bottom: 20px;">
         <div class="panel-head">
-          <h2>Contender A/B scoreboard</h2>
-          <span class="panel-note mono">Pass^{k_reps} requires {k_reps}/{k_reps} consecutive clean passes per task</span>
+          <h2 id="sb-heading">{html.escape(sb_heading)}</h2>
+          <span class="panel-note mono" id="sb-note">{html.escape(sb_note)}</span>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Contender arm</th>
-              <th>Mounted SKILL.md</th>
-              <th>Pass@1</th>
-              <th>Pass^{k_reps} consistency</th>
-              <th>Cost / success</th>
-              <th>Turn-1 context delta</th>
-              <th>Median latency</th>
-              <th>Test integrity</th>
+              <th id="th-arm">{html.escape(th_arm)}</th>
+              <th id="th-skill">{html.escape(th_skill)}</th>
+              <th id="th-elo">{html.escape(th_elo)}</th>
+              <th id="th-pass1">{html.escape(th_pass1)}</th>
+              <th id="th-passk">{html.escape(th_passk)}</th>
+              <th id="th-cps">{html.escape(th_cps)}</th>
+              <th id="th-delta">{html.escape(th_delta)}</th>
+              <th id="th-lat">{html.escape(th_lat)}</th>
+              <th id="th-int">{html.escape(th_int)}</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="lb-tbody">
             {"".join(lb_rows_html)}
           </tbody>
         </table>
@@ -653,21 +903,28 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Task-by-task worktree telemetry matrix</h2>
-          <span class="panel-note">Select any row to open synchronized Control vs Treatment trajectory replay</span>
+          <h2 id="mat-heading">{html.escape(mat_heading)}</h2>
+          <div class="filter-bar" role="group" aria-label="Filter benchmark tasks">
+            <button type="button" class="filter-pill is-active" data-task-filter="all">{html.escape(f_all)}</button>
+            <button type="button" class="filter-pill" data-task-filter="gains">{html.escape(f_gains)}</button>
+            <button type="button" class="filter-pill" data-task-filter="concurrency">{html.escape(f_conc)}</button>
+            <button type="button" class="filter-pill" data-task-filter="frontend_craft">{html.escape(f_ui)}</button>
+            <button type="button" class="filter-pill" data-task-filter="refactor_test">{html.escape(f_refac)}</button>
+            <button type="button" class="filter-pill" data-task-filter="security_hygiene">{html.escape(f_sec)}</button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Task ID</th>
-              <th>Engineering benchmark specification</th>
-              <th>Control ({html.escape(_clean_prose(str(control.get("label", "Baseline"))))})</th>
-              <th>Treatment ({html.escape(_clean_prose(str(treatment.get("label", "Skilled"))))})</th>
-              <th>Outcome delta</th>
-              <th>Trajectory</th>
+              <th id="mth-id">{html.escape(mth_id)}</th>
+              <th id="mth-spec">{html.escape(mth_spec)}</th>
+              <th id="mth-ctrl">{html.escape(mth_ctrl)}</th>
+              <th id="mth-treat">{html.escape(mth_treat)}</th>
+              <th id="mth-delta">{html.escape(mth_delta)}</th>
+              <th id="mth-traj">{html.escape(mth_traj)}</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="matrix-tbody">
             {"".join(matrix_rows_html)}
           </tbody>
         </table>
@@ -676,14 +933,19 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
 
     <section id="view-replay" class="panel" {replay_hidden}>
       <div class="replay-toolbar">
-        <div>
-          <label for="replay-task-select" class="panel-note" style="margin-right: 8px;">Benchmark task:</label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label for="replay-task-select" class="panel-note" id="rep-task-lbl">{html.escape(rep_task_lbl)}</label>
           <select id="replay-task-select" class="replay-select"></select>
         </div>
+        <div class="filter-bar" role="group" aria-label="Replay detail mode">
+          <button type="button" class="filter-pill is-active" data-replay-mode="both" id="rf-both">{html.escape(rf_both)}</button>
+          <button type="button" class="filter-pill" data-replay-mode="steps" id="rf-steps">{html.escape(rf_steps)}</button>
+          <button type="button" class="filter-pill" data-replay-mode="diff" id="rf-diff">{html.escape(rf_diff)}</button>
+        </div>
         <div class="scrubber-group">
-          <span>Synchronized step cursor:</span>
+          <span id="rep-cursor-lbl">{html.escape(rep_cursor_lbl)}</span>
           <input type="range" id="step-scrubber" min="1" max="5" value="3">
-          <span id="step-scrubber-label" class="mono strong">Step 3</span>
+          <span id="step-scrubber-label" class="mono strong">{html.escape(rep_step_init)}</span>
         </div>
       </div>
       <div class="dual-grid" id="dual-replay-stage"></div>
@@ -691,17 +953,23 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
   </main>
 
   <script id="arena-report-data" type="application/json">{safe_json}</script>
+  <script id="arena-zh-titles" type="application/json">{zh_titles_json}</script>
+  <script id="arena-zh-cats" type="application/json">{zh_cats_json}</script>
   <script>
     (function () {{
-      const raw = document.getElementById("arena-report-data").textContent;
-      const report = JSON.parse(raw);
+      const report = JSON.parse(document.getElementById("arena-report-data").textContent);
+      const ZH_TITLES = JSON.parse(document.getElementById("arena-zh-titles").textContent);
+      const ZH_CATS = JSON.parse(document.getElementById("arena-zh-cats").textContent);
+
       const leaderboard = report.leaderboard || [];
       const controlMeta = leaderboard.find(r => r.role === "control") || leaderboard[0] || {{}};
       const treatMeta = leaderboard.find(r => r.role === "treatment") || leaderboard[1] || controlMeta;
       const tasks = report.task_matrix || [];
+      const kReps = Number(report.k_reps || 3);
 
       const btnScore = document.getElementById("btn-view-scoreboard");
       const btnReplay = document.getElementById("btn-view-replay");
+      const btnTheme = document.getElementById("btn-theme-toggle");
       const viewScore = document.getElementById("view-scoreboard");
       const viewReplay = document.getElementById("view-replay");
       const selectEl = document.getElementById("replay-task-select");
@@ -709,11 +977,246 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       const scrubberLabel = document.getElementById("step-scrubber-label");
       const stage = document.getElementById("dual-replay-stage");
 
+      let currentLang = "en";
+      let currentTaskFilter = "all";
+      let currentReplayMode = "both";
+
+      const I18N = {{
+        en: {{
+          docTitlePrefix: "SkillArena Telemetry: ",
+          brandSub: "Git-worktree A/B benchmark & wire-tap token telemetry",
+          tabScore: "Scoreboard & economics",
+          tabReplay: "Dual-track trajectory replay",
+          themeToDark: "Switch telemetry theme",
+          themeToLight: "Light newsprint theme",
+          graderNote: "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders",
+          kpi1Lbl: "Treatment Pass@1 lift",
+          kpi2Lbl: "True cost per success",
+          kpi3Lbl: "Turn-1 skill context tax",
+          kpi3Foot: "Prompt delta injected on initial request",
+          kpi4Lbl: "Anti-cheat test integrity",
+          kpi4Foot: "Protected test SHA-256 verified post-run",
+          sbHeading: "Contender A/B scoreboard",
+          thArm: "Contender arm",
+          thSkill: "Mounted SKILL.md",
+          thElo: "BT Elo",
+          thPass1: "Pass@1",
+          thCps: "Cost / success",
+          thDelta: "Turn-1 context delta",
+          thLat: "Median latency",
+          thInt: "Test integrity",
+          roleControl: "Control",
+          roleTreatment: "Treatment",
+          noneStripped: "None (stripped)",
+          zeroBaseline: "0 tok (baseline)",
+          matHeading: "Task-by-task worktree telemetry matrix",
+          fAll: "All",
+          fGains: "Skill gains",
+          fConc: "Concurrency",
+          fUi: "Frontend craft",
+          fRefac: "Refactor",
+          fSec: "Security",
+          mthId: "Task ID",
+          mthSpec: "Engineering benchmark specification",
+          mthDelta: "Outcome delta",
+          mthTraj: "Trajectory",
+          suiteDomain: "Suite domain: ",
+          passWord: "pass",
+          gainWord: "gain",
+          regWord: "regressed",
+          parity: "Parity",
+          inspectBtn: "Inspect dual replay",
+          emptyFilter: "No benchmark tasks match the selected filter.",
+          repTaskLbl: "Benchmark task:",
+          rfBoth: "Steps & diff",
+          rfSteps: "Steps only",
+          rfDiff: "Worktree diff",
+          repCursorLbl: "Synchronized step cursor:",
+          noTraj: "No trajectory recorded.",
+          passExit0: "PASS (exit 0)",
+          failBadge: "FAIL",
+          turn1Lbl: "Turn-1: ",
+          totalLbl: "Total: $",
+          latLbl: "Latency: ",
+          graderSum: "Grader summary: ",
+          noDiff: "(No implementation lines modified)",
+          workspaceTok: "workspace",
+          kindMap: {{
+            skill_mount: "skill_mount",
+            thought: "thought",
+            tool_call: "tool_call",
+            file_patch: "file_patch",
+            verify: "verify"
+          }}
+        }},
+        zh: {{
+          docTitlePrefix: "SkillArena 遥测看板：",
+          brandSub: "Git Worktree 隔离沙盒 A/B 评测与流量监听遥测",
+          tabScore: "排行榜与成本效能",
+          tabReplay: "双轨轨迹与补丁回放",
+          themeToDark: "深色遥测主题",
+          themeToLight: "浅色报刊主题",
+          graderNote: "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验",
+          kpi1Lbl: "实验组 Pass@1 净提升",
+          kpi2Lbl: "单次成功真实摊销成本",
+          kpi3Lbl: "首轮技能上下文税",
+          kpi3Foot: "首次请求注入的 SKILL.md 提示词增量",
+          kpi4Lbl: "防作弊测试完整性",
+          kpi4Foot: "受保护测试文件运行后 SHA-256 校验通过",
+          sbHeading: "参赛智能体 A/B 排行榜",
+          thArm: "参赛组别",
+          thSkill: "挂载技能",
+          thElo: "BT Elo",
+          thPass1: "Pass@1",
+          thCps: "单次成功成本",
+          thDelta: "首轮上下文增量",
+          thLat: "中位耗时",
+          thInt: "防作弊完整性",
+          roleControl: "对照组",
+          roleTreatment: "实验组",
+          noneStripped: "无（已剥离）",
+          zeroBaseline: "0 tok（基线）",
+          matHeading: "逐任务 Worktree 沙盒遥测矩阵",
+          fAll: "全部",
+          fGains: "技能净胜",
+          fConc: "并发控制",
+          fUi: "前端工艺",
+          fRefac: "重构测试",
+          fSec: "安全加固",
+          mthId: "任务 ID",
+          mthSpec: "工程基准测试规范",
+          mthDelta: "结果净变化",
+          mthTraj: "双轨回放",
+          suiteDomain: "所属领域：",
+          passWord: "通过",
+          gainWord: "净提升",
+          regWord: "退化",
+          parity: "持平",
+          inspectBtn: "查看双轨回放",
+          emptyFilter: "当前筛选条件下暂无匹配任务。",
+          repTaskLbl: "基准测试任务：",
+          rfBoth: "轨迹与补丁",
+          rfSteps: "仅执行轨迹",
+          rfDiff: "仅代码补丁",
+          repCursorLbl: "同步步骤游标：",
+          noTraj: "未记录执行轨迹。",
+          passExit0: "通过 (exit 0)",
+          failBadge: "失败",
+          turn1Lbl: "首轮：",
+          totalLbl: "总计：$",
+          latLbl: "耗时：",
+          graderSum: "判分摘要：",
+          noDiff: "（未修改任何实现代码行）",
+          workspaceTok: "沙盒环境",
+          kindMap: {{
+            skill_mount: "技能挂载",
+            thought: "推理分析",
+            tool_call: "工具调用",
+            file_patch: "代码补丁",
+            verify: "判分校验"
+          }}
+        }}
+      }};
+
       function esc(str) {{
         return String(str || "")
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;");
+      }}
+
+      function fmtPct(rate) {{
+        return (Number(rate || 0) * 100).toFixed(1) + "%";
+      }}
+
+      function fmtUsd(val) {{
+        return val === null || val === undefined ? "n/a" : ("$" + Number(val).toFixed(4));
+      }}
+
+      function localizeExpTitle(raw) {{
+        if (currentLang !== "zh") return raw;
+        const map = {{
+          "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills":
+            "Claude Sonnet 4.5：无技能基线 对比 精选工程与 Hallmark 技能包",
+          "Control vs SKILL.md A/B Evaluation": "对照组 对比 SKILL.md 技能包 A/B 评测",
+          "SkillArena Benchmark Report": "SkillArena 基准评测报告"
+        }};
+        return map[raw] || raw;
+      }}
+
+      function localizeArmLabel(lbl) {{
+        const s = String(lbl || "");
+        if (currentLang !== "zh") return s;
+        return s
+          .replace("No Skill", "无技能基线")
+          .replace("+ Curated Engineering Skills", "+ 精选工程技能包");
+      }}
+
+      function localizeTaskTitle(task) {{
+        if (currentLang === "zh" && ZH_TITLES[task.task_id]) {{
+          return ZH_TITLES[task.task_id];
+        }}
+        return task.title;
+      }}
+
+      function localizeCat(cat) {{
+        if (currentLang === "zh" && ZH_CATS[cat]) {{
+          return ZH_CATS[cat];
+        }}
+        return cat;
+      }}
+
+      function localizeStepSummary(s) {{
+        const txt = String(s || "");
+        if (currentLang !== "zh") return txt;
+        if (txt.startsWith("Loaded SKILL.md ")) return txt.replace("Loaded SKILL.md ", "已挂载 SKILL.md ");
+        if (txt === "Analyzed task invariants & SKILL.md guardrails") return "分析任务不变量与 SKILL.md 约束护栏";
+        if (txt === "Scanned prompt without specialized skill checklist") return "在无专项技能清单下扫描任务提示词";
+        if (txt === "Inspected source files & ran exploratory command") return "检查源码文件并运行探索命令";
+        if (txt === "Wrote partial implementation attempt") return "编写局部修复补丁尝试";
+        if (txt === "Retried after test failure without root-cause fix") return "单测失败后重试但未定位根因";
+        if (txt === "Deterministic Grader -> PASS") return "确定性判分器 -> 通过";
+        if (txt === "Deterministic Grader -> FAIL") return "确定性判分器 -> 失败";
+        const mRead = txt.match(/^Read workspace & inspected (\\d+) files$/);
+        if (mRead) return "读取沙盒工作区并检查 " + mRead[1] + " 个文件";
+        const mPatch = txt.match(/^Applied targeted patch \\((\\d+) file\\)$/);
+        if (mPatch) return "应用精准修复补丁（" + mPatch[1] + " 个文件）";
+        return txt;
+      }}
+
+      function localizeStepDetail(d) {{
+        const txt = String(d || "");
+        if (currentLang !== "zh") return txt;
+        if (txt === "Identified exact edge-case contract before editing implementation.") return "修改代码前已确认并发、边界与排版契约。";
+        if (txt === "Drafted surface patch without checking concurrency/sloplint edge cases.") return "仅生成表层补丁，未核查并发竞态与 sloplint 边界规范。";
+        if (txt === "Missed strict invariant / left off-grid CSS or unguarded lock path.") return "遗漏关键不变量，残留非 4px 栅格样式或未加锁路径。";
+        if (txt === "Burned extra completion tokens re-reading stack trace.") return "反复读取报错堆栈，额外消耗大量输出 Token。";
+        const mOvh = txt.match(/^Turn-1 context overhead: \\+(\\d+) tokens mounted into \\.agents\\/skills\\/\\.$/);
+        if (mOvh) return "首轮上下文增量：向 .agents/skills/ 注入 +" + mOvh[1] + " tokens。";
+        const mChk = txt.match(/^Checked (.+) and test suite\\.$/);
+        if (mChk) return "已核对 " + mChk[1] + " 与受保护单元测试套件。";
+        const mOpen = txt.match(/^Opened (.+)\\.$/);
+        if (mOpen) return "已打开 " + mOpen[1] + "。";
+        const mUpd = txt.match(/^Updated (.+) with minimal diff\\.$/);
+        if (mUpd) return "以最小代码变更更新 " + mUpd[1] + "。";
+        return localizeVerdictSummary(txt);
+      }}
+
+      function localizeVerdictSummary(v) {{
+        const txt = String(v || "");
+        if (currentLang !== "zh") return txt;
+        return txt
+          .replace("Unit tests passed (exit 0)", "单元测试通过 (exit 0)")
+          .replace(/Tests exited with code (\\d+)/, "测试进程退出码 $1（未通过）")
+          .replace(/diff \\+(\\d+)\\/-(\\d+) \\(([\\d.]+)x budget\\)/, "代码变更 +$1/-$2 行（占预算 $3x）")
+          .replace("Hallmark craft clean", "Hallmark 工艺零告警")
+          .replace(/Hallmark craft FAIL=(\\d+), WARN=(\\d+)/, "Hallmark 工艺违规 FAIL=$1, WARN=$2");
+      }}
+
+      function syncThemeButtonLabel() {{
+        const t = I18N[currentLang];
+        const isDark = document.documentElement.getAttribute("data-theme") === "telemetry";
+        btnTheme.textContent = isDark ? t.themeToLight : t.themeToDark;
       }}
 
       function setView(mode) {{
@@ -724,68 +1227,270 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
         btnReplay.classList.toggle("is-active", isReplay);
       }}
 
-      tasks.forEach((t, i) => {{
-        const opt = document.createElement("option");
-        opt.value = String(i);
-        opt.textContent = t.task_id + " : " + t.title;
-        selectEl.appendChild(opt);
-      }});
+      function populateTaskSelect() {{
+        const prev = selectEl.value || "0";
+        selectEl.innerHTML = "";
+        tasks.forEach((t, i) => {{
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = t.task_id + " : " + localizeTaskTitle(t);
+          selectEl.appendChild(opt);
+        }});
+        selectEl.value = prev;
+      }}
+
+      function renderScoreboardAndMatrix() {{
+        const t = I18N[currentLang];
+        const expTitle = localizeExpTitle(report.title || "SkillArena Benchmark Report");
+        document.title = t.docTitlePrefix + expTitle;
+        document.getElementById("brand-sub").textContent = t.brandSub;
+        btnScore.textContent = t.tabScore;
+        btnReplay.textContent = t.tabReplay;
+        syncThemeButtonLabel();
+
+        document.getElementById("exp-title").textContent = expTitle;
+        document.getElementById("exp-meta-line").textContent =
+          currentLang === "zh"
+            ? ("实验编号 " + report.experiment_id + " · 评测集：" + report.suite_name + "（" + tasks.length + " 项任务 x " + kReps + " 轮独立 Worktree 重复）")
+            : ("Experiment " + report.experiment_id + " · Suite: " + report.suite_name + " (" + tasks.length + " tasks x " + kReps + " isolated worktree reps)");
+        document.getElementById("grader-note").textContent = t.graderNote;
+
+        const cPass1 = Number(controlMeta.pass_at_1 || 0);
+        const tPass1 = Number(treatMeta.pass_at_1 || 0);
+        document.getElementById("kpi1-lbl").textContent = t.kpi1Lbl;
+        document.getElementById("kpi1-foot").textContent =
+          currentLang === "zh"
+            ? ("对照组 " + fmtPct(cPass1) + " 对比 实验组 " + fmtPct(tPass1))
+            : ("Control " + fmtPct(cPass1) + " vs Treatment " + fmtPct(tPass1));
+
+        document.getElementById("kpi2-lbl").textContent = t.kpi2Lbl;
+        document.getElementById("kpi2-foot").textContent =
+          currentLang === "zh"
+            ? ("对照组摊销：" + fmtUsd(controlMeta.cost_per_success_usd) + "（含失败重试损耗）")
+            : ("Control amortized: " + fmtUsd(controlMeta.cost_per_success_usd) + " (failed retries included)");
+
+        document.getElementById("kpi3-lbl").textContent = t.kpi3Lbl;
+        document.getElementById("kpi3-foot").textContent = t.kpi3Foot;
+        document.getElementById("kpi4-lbl").textContent = t.kpi4Lbl;
+        document.getElementById("kpi4-foot").textContent = t.kpi4Foot;
+
+        document.getElementById("sb-heading").textContent = t.sbHeading;
+        document.getElementById("sb-note").textContent =
+          currentLang === "zh"
+            ? ("Bradley-Terry Elo 与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
+            : ("Bradley-Terry Elo & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
+
+        document.getElementById("th-arm").textContent = t.thArm;
+        document.getElementById("th-skill").textContent = t.thSkill;
+        document.getElementById("th-elo").textContent = t.thElo;
+        document.getElementById("th-pass1").textContent = t.thPass1;
+        document.getElementById("th-passk").textContent =
+          currentLang === "zh" ? ("Pass^" + kReps + " 稳健率") : ("Pass^" + kReps + " consistency");
+        document.getElementById("th-cps").textContent = t.thCps;
+        document.getElementById("th-delta").textContent = t.thDelta;
+        document.getElementById("th-lat").textContent = t.thLat;
+        document.getElementById("th-int").textContent = t.thInt;
+
+        document.getElementById("lb-tbody").innerHTML = leaderboard.map((row) => {{
+          const isTreat = row.role === "treatment";
+          const badgeCls = isTreat ? "arm-pill-treatment" : "arm-pill-control";
+          const roleTxt = isTreat ? t.roleTreatment : t.roleControl;
+          const skillsTxt = (row.skills_mounted && row.skills_mounted.length)
+            ? row.skills_mounted.join(", ")
+            : t.noneStripped;
+          const ovh = Number(row.context_overhead_delta_tokens || 0);
+          const ovhTxt = ovh > 0
+            ? ("+" + ovh.toLocaleString("en-US") + " tok")
+            : (ovh < 0 ? (ovh.toLocaleString("en-US") + " tok") : t.zeroBaseline);
+          const eloVal = Number(row.elo_rating || 1500);
+          const intPct = Number(row.anti_cheat_integrity_rate ?? 1.0);
+          const intCls = intPct >= 0.999 ? "status-ok" : "status-fail";
+          return (
+            "<tr>" +
+              "<td><div class='arm-cell'>" +
+                "<span class='arm-pill " + badgeCls + "'>" + esc(roleTxt) + "</span>" +
+                "<div>" +
+                  "<div class='arm-name'>" + esc(localizeArmLabel(row.label)) + "</div>" +
+                  "<div class='arm-meta'>" + esc(row.cli) + " · " + esc(row.model) + "</div>" +
+                "</div>" +
+              "</div></td>" +
+              "<td class='mono'>" + esc(skillsTxt) + "</td>" +
+              "<td class='mono strong'>" + eloVal + "</td>" +
+              "<td class='mono strong'>" + fmtPct(row.pass_at_1) + "</td>" +
+              "<td class='mono'>" + fmtPct(row.pass_hat_k) + "</td>" +
+              "<td class='mono'>" + fmtUsd(row.cost_per_success_usd) + "</td>" +
+              "<td class='mono'>" + esc(ovhTxt) + "</td>" +
+              "<td class='mono'>" + (Number(row.median_latency_ms || 0) / 1000).toFixed(2) + "s</td>" +
+              "<td class='mono " + intCls + "'>" + fmtPct(intPct) + "</td>" +
+            "</tr>"
+          );
+        }}).join("");
+
+        document.getElementById("mat-heading").textContent = t.matHeading;
+        const filterMap = {{
+          all: t.fAll,
+          gains: t.fGains,
+          concurrency: t.fConc,
+          frontend_craft: t.fUi,
+          refactor_test: t.fRefac,
+          security_hygiene: t.fSec
+        }};
+        document.querySelectorAll("[data-task-filter]").forEach((btn) => {{
+          const key = btn.getAttribute("data-task-filter");
+          if (filterMap[key]) btn.textContent = filterMap[key];
+          btn.classList.toggle("is-active", key === currentTaskFilter);
+        }});
+
+        document.getElementById("mth-id").textContent = t.mthId;
+        document.getElementById("mth-spec").textContent = t.mthSpec;
+        document.getElementById("mth-ctrl").textContent =
+          t.roleControl + " (" + localizeArmLabel(controlMeta.label || "Baseline") + ")";
+        document.getElementById("mth-treat").textContent =
+          t.roleTreatment + " (" + localizeArmLabel(treatMeta.label || "Skilled") + ")";
+        document.getElementById("mth-delta").textContent = t.mthDelta;
+        document.getElementById("mth-traj").textContent = t.mthTraj;
+
+        const cId = controlMeta.contender_id || "";
+        const tId = treatMeta.contender_id || "";
+        const filteredRows = [];
+        tasks.forEach((item, idx) => {{
+          const cArm = (item.arms && item.arms[cId]) || {{}};
+          const tArm = (item.arms && item.arms[tId]) || {{}};
+          const cP = Number(cArm.passed_count || 0);
+          const cTot = Number(cArm.total_reps || kReps);
+          const tP = Number(tArm.passed_count || 0);
+          const tTot = Number(tArm.total_reps || kReps);
+          const deltaVal = tP - cP;
+
+          if (currentTaskFilter === "gains" && deltaVal <= 0) return;
+          if (
+            currentTaskFilter !== "all" &&
+            currentTaskFilter !== "gains" &&
+            item.category !== currentTaskFilter
+          ) {{
+            return;
+          }}
+
+          const cCls = (cP === cTot && cTot > 0) ? "verdict-pass" : (cP > 0 ? "verdict-flaky" : "verdict-fail");
+          const tCls = (tP === tTot && tTot > 0) ? "verdict-pass" : (tP > 0 ? "verdict-flaky" : "verdict-fail");
+          let deltaBadge = "<span class='delta-tag delta-tie'>" + esc(t.parity) + "</span>";
+          if (deltaVal > 0) {{
+            deltaBadge = "<span class='delta-tag delta-win'>+" + deltaVal + "/" + tTot + " " + esc(t.gainWord) + "</span>";
+          }} else if (deltaVal < 0) {{
+            deltaBadge = "<span class='delta-tag delta-reg'>" + deltaVal + "/" + tTot + " " + esc(t.regWord) + "</span>";
+          }}
+
+          filteredRows.push(
+            "<tr>" +
+              "<td class='mono task-id-col'>" + esc(item.task_id) + "</td>" +
+              "<td class='task-spec-col'>" +
+                "<div class='task-title-text'>" + esc(localizeTaskTitle(item)) + "</div>" +
+                "<div class='task-cat-text'>" + esc(t.suiteDomain + localizeCat(item.category)) + "</div>" +
+              "</td>" +
+              "<td class='mono'><span class='verdict-pill " + cCls + "'>" + cP + "/" + cTot + " " + esc(t.passWord) + "</span> · $" + Number(cArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
+              "<td class='mono'><span class='verdict-pill " + tCls + "'>" + tP + "/" + tTot + " " + esc(t.passWord) + "</span> · $" + Number(tArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
+              "<td class='mono'>" + deltaBadge + "</td>" +
+              "<td><button type='button' class='inspect-btn' data-replay-index='" + idx + "'>" + esc(t.inspectBtn) + "</button></td>" +
+            "</tr>"
+          );
+        }});
+
+        const matTbody = document.getElementById("matrix-tbody");
+        if (!filteredRows.length) {{
+          matTbody.innerHTML = "<tr><td colspan='6' class='panel-note'>" + esc(t.emptyFilter) + "</td></tr>";
+        }} else {{
+          matTbody.innerHTML = filteredRows.join("");
+        }}
+
+        matTbody.querySelectorAll("[data-replay-index]").forEach((btn) => {{
+          btn.addEventListener("click", () => {{
+            selectEl.value = btn.getAttribute("data-replay-index") || "0";
+            setView("replay");
+            renderReplay();
+          }});
+        }});
+      }}
+
+      function idxLabel(n, kind) {{
+        const t = I18N[currentLang];
+        const kLabel = (t.kindMap && t.kindMap[kind]) || kind;
+        return "[" + n + " · " + kLabel + "]";
+      }}
 
       function renderTrackColumn(armMeta, armData, activeStep, isTreatment) {{
+        const t = I18N[currentLang];
         const trial = (armData && armData.rep1_trial) || null;
         if (!trial) {{
-          return '<div class="track-col"><p>No trajectory recorded.</p></div>';
+          return '<div class="track-col"><p>' + esc(t.noTraj) + '</p></div>';
         }}
         const steps = trial.steps || [];
         const usage = trial.usage || {{}};
         const verdict = trial.verdict || {{}};
         const pillCls = trial.passed ? "verdict-pass" : "verdict-fail";
-        const pillTxt = trial.passed ? "PASS (exit 0)" : "FAIL";
+        const pillTxt = trial.passed ? t.passExit0 : t.failBadge;
         const bannerCls = isTreatment ? "track-banner is-treatment" : "track-banner";
 
         const stepCards = steps.map((s, idx) => {{
           const hi = (idx + 1) === activeStep ? "step-card is-highlighted" : "step-card";
-          const tokInfo = s.prompt_tokens
-            ? (s.prompt_tokens + " in (" + s.cached_tokens + " cached) / " + s.completion_tokens + " out · $" + Number(s.cost_usd || 0).toFixed(4))
-            : (s.latency_ms ? (s.latency_ms + " ms") : "workspace");
+          let tokInfo = t.workspaceTok;
+          if (s.prompt_tokens) {{
+            tokInfo = currentLang === "zh"
+              ? ("输入 " + s.prompt_tokens + " (缓存 " + s.cached_tokens + ") / 输出 " + s.completion_tokens + " · $" + Number(s.cost_usd || 0).toFixed(4))
+              : (s.prompt_tokens + " in (" + s.cached_tokens + " cached) / " + s.completion_tokens + " out · $" + Number(s.cost_usd || 0).toFixed(4));
+          }} else if (s.latency_ms) {{
+            tokInfo = s.latency_ms + " ms";
+          }}
           return (
             '<div class="' + hi + '">' +
               '<div class="step-head">' +
-                '<span class="step-title">' + idx_label(idx + 1, s.kind) + " " + esc(s.summary) + '</span>' +
+                '<span class="step-title">' + esc(idxLabel(idx + 1, s.kind)) + " " + esc(localizeStepSummary(s.summary)) + '</span>' +
                 '<span class="step-metrics mono">' + esc(tokInfo) + '</span>' +
               '</div>' +
-              '<div class="step-detail">' + esc(s.detail) + '</div>' +
+              '<div class="step-detail">' + esc(localizeStepDetail(s.detail)) + '</div>' +
             '</div>'
           );
         }}).join("");
 
-        const diffText = (trial.git_diff || "(No implementation lines modified)").slice(0, 1800);
+        const diffText = (trial.git_diff || t.noDiff).slice(0, 1800);
+        const stepsSection = currentReplayMode === "diff"
+          ? ""
+          : ('<div class="step-list">' + stepCards + '</div>');
+        const diffSection = currentReplayMode === "steps"
+          ? ""
+          : (
+            '<div>' +
+              '<div class="panel-note mono" style="margin-bottom: 8px;">' + esc(t.graderSum + localizeVerdictSummary(verdict.summary)) + '</div>' +
+              '<pre class="diff-box mono">' + esc(diffText) + '</pre>' +
+            '</div>'
+          );
+
         return (
           '<div class="track-col">' +
             '<div class="' + bannerCls + '">' +
               '<div>' +
-                '<div class="arm-name">' + esc(armMeta.label) + '</div>' +
+                '<div class="arm-name">' + esc(localizeArmLabel(armMeta.label)) + '</div>' +
                 '<div class="arm-meta mono">' +
-                  'Turn-1: ' + (usage.first_turn_prompt_tokens || 0) + ' tok · Total: $' + Number(usage.total_cost_usd || 0).toFixed(4) +
-                  ' · Latency: ' + ((usage.total_latency_ms || 0) / 1000).toFixed(2) + 's' +
+                  esc(t.turn1Lbl) + (usage.first_turn_prompt_tokens || 0) + ' tok · ' +
+                  esc(t.totalLbl) + Number(usage.total_cost_usd || 0).toFixed(4) + ' · ' +
+                  esc(t.latLbl) + ((usage.total_latency_ms || 0) / 1000).toFixed(2) + 's' +
                 '</div>' +
               '</div>' +
-              '<span class="verdict-pill mono ' + pillCls + '">' + pillTxt + '</span>' +
+              '<span class="verdict-pill mono ' + pillCls + '">' + esc(pillTxt) + '</span>' +
             '</div>' +
-            '<div class="step-list">' + stepCards + '</div>' +
-            '<div>' +
-              '<div class="panel-note mono" style="margin-bottom: 8px;">Grader summary: ' + esc(verdict.summary) + '</div>' +
-              '<pre class="diff-box mono">' + esc(diffText) + '</pre>' +
-            '</div>' +
+            stepsSection +
+            diffSection +
           '</div>'
         );
       }}
 
-      function idx_label(n, kind) {{
-        return "[" + n + " · " + kind + "]";
-      }}
-
       function renderReplay() {{
+        const t = I18N[currentLang];
+        document.getElementById("rep-task-lbl").textContent = t.repTaskLbl;
+        document.getElementById("rf-both").textContent = t.rfBoth;
+        document.getElementById("rf-steps").textContent = t.rfSteps;
+        document.getElementById("rf-diff").textContent = t.rfDiff;
+        document.getElementById("rep-cursor-lbl").textContent = t.repCursorLbl;
+
         const idx = Number(selectEl.value || 0);
         const task = tasks[idx];
         if (!task) return;
@@ -797,11 +1502,29 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
         scrubber.max = String(maxSteps);
         if (Number(scrubber.value) > maxSteps) scrubber.value = String(maxSteps);
         const curStep = Number(scrubber.value || 1);
-        scrubberLabel.textContent = "Step " + curStep + " / " + maxSteps;
+        scrubberLabel.textContent = currentLang === "zh"
+          ? ("第 " + curStep + " / " + maxSteps + " 步")
+          : ("Step " + curStep + " / " + maxSteps);
 
         stage.innerHTML =
           renderTrackColumn(controlMeta, cArm, Math.min(curStep, cSteps), false) +
           renderTrackColumn(treatMeta, tArm, Math.min(curStep, tSteps), true);
+      }}
+
+      function setLang(lang, persist) {{
+        currentLang = lang === "zh" ? "zh" : "en";
+        document.documentElement.lang = currentLang === "zh" ? "zh-CN" : "en";
+        if (persist) {{
+          try {{ localStorage.setItem("skill-arena-lang", currentLang); }} catch (_) {{}}
+        }}
+        document.querySelectorAll("[data-lang-switch]").forEach((btn) => {{
+          const active = btn.getAttribute("data-lang-switch") === currentLang;
+          btn.classList.toggle("is-active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+        }});
+        populateTaskSelect();
+        renderScoreboardAndMatrix();
+        renderReplay();
       }}
 
       btnScore.addEventListener("click", () => setView("scoreboard"));
@@ -809,28 +1532,58 @@ def render_arena_html(report: dict[str, Any], default_view: str = "scoreboard") 
       selectEl.addEventListener("change", renderReplay);
       scrubber.addEventListener("input", renderReplay);
 
-      document.querySelectorAll("[data-replay-index]").forEach((btn) => {{
+      document.querySelectorAll("[data-lang-switch]").forEach((btn) => {{
         btn.addEventListener("click", () => {{
-          selectEl.value = btn.getAttribute("data-replay-index") || "0";
-          setView("replay");
+          setLang(btn.getAttribute("data-lang-switch") || "en", true);
+        }});
+      }});
+
+      document.querySelectorAll("[data-task-filter]").forEach((btn) => {{
+        btn.addEventListener("click", () => {{
+          currentTaskFilter = btn.getAttribute("data-task-filter") || "all";
+          renderScoreboardAndMatrix();
+        }});
+      }});
+
+      document.querySelectorAll("[data-replay-mode]").forEach((btn) => {{
+        btn.addEventListener("click", () => {{
+          currentReplayMode = btn.getAttribute("data-replay-mode") || "both";
+          document.querySelectorAll("[data-replay-mode]").forEach((b) => {{
+            b.classList.toggle("is-active", b === btn);
+          }});
           renderReplay();
         }});
       }});
 
-      document.getElementById("btn-theme-toggle").addEventListener("click", () => {{
+      btnTheme.addEventListener("click", () => {{
         const root = document.documentElement;
         root.setAttribute(
           "data-theme",
           root.getAttribute("data-theme") === "telemetry" ? "newsprint" : "telemetry"
         );
+        syncThemeButtonLabel();
       }});
 
       const params = new URLSearchParams(window.location.search);
+      const qLang = (params.get("lang") || "").toLowerCase();
+      let savedLang = "";
+      try {{ savedLang = (localStorage.getItem("skill-arena-lang") || "").toLowerCase(); }} catch (_) {{}}
+      const rootDefault = (document.documentElement.getAttribute("data-default-lang") || "auto").toLowerCase();
+      const navZh = ((navigator.language || "").toLowerCase().startsWith("zh"));
+
+      let initialLang = "en";
+      if (qLang.startsWith("zh")) initialLang = "zh";
+      else if (qLang.startsWith("en")) initialLang = "en";
+      else if (savedLang === "zh" || savedLang === "en") initialLang = savedLang;
+      else if (rootDefault === "zh" || rootDefault === "en") initialLang = rootDefault;
+      else if (navZh) initialLang = "zh";
+
+      populateTaskSelect();
       if (params.get("task")) {{
         const found = tasks.findIndex(t => t.task_id === params.get("task"));
         if (found >= 0) selectEl.value = String(found);
       }}
-      renderReplay();
+      setLang(initialLang, false);
       if (params.get("view") === "replay") {{
         setView("replay");
       }}

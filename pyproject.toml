@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skill-arena"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cross-vendor coding agent & SKILL.md scientific A/B benchmark harness with isolated git worktrees, loopback token wire-tap, deterministic anti-cheat graders, and dual-track trajectory replay."
 readme = "README.md"
 license = { text = "MIT" }

@@ -1,4 +1,4 @@
-"""Local HTTP Studio server exposing SQLite benchmark APIs and live dual-track UI."""
+"""Local HTTP Studio server exposing SQLite benchmark APIs and live bilingual dual-track UI."""
 
 from __future__ import annotations
 
@@ -6,11 +6,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from urllib.parse import parse_qs, urlparse
 
+from skill_arena.i18n import resolve_lang
 from skill_arena.store.arena_db import ArenaDatabase
 from skill_arena.studio.templates import render_arena_html
 
 
-def create_studio_server(db: ArenaDatabase, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def create_studio_server(
+    db: ArenaDatabase,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    default_lang: str = "auto",
+) -> ThreadingHTTPServer:
     """Create a ThreadingHTTPServer serving the SkillArena Studio web app and JSON endpoints."""
 
     class StudioHandler(BaseHTTPRequestHandler):
@@ -20,6 +26,7 @@ def create_studio_server(db: ArenaDatabase, host: str = "127.0.0.1", port: int =
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
+            req_lang = (qs.get("lang") or [default_lang])[0]
 
             if parsed.path == "/api/experiments":
                 self._send_json(200, {"experiments": db.list_experiments()})
@@ -36,7 +43,11 @@ def create_studio_server(db: ArenaDatabase, host: str = "127.0.0.1", port: int =
 
             exp_id = (qs.get("exp") or [None])[0] or db.latest_experiment_id()
             if exp_id is None:
-                body = b"<!doctype html><title>SkillArena Studio</title><p>No experiments found in database.</p>"
+                is_zh = resolve_lang(req_lang) == "zh"
+                empty_msg = "数据库中未找到实验记录。" if is_zh else "No experiments found in database."
+                body = f"<!doctype html><meta charset='utf-8'><title>SkillArena Studio</title><p>{empty_msg}</p>".encode(
+                    "utf-8"
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -45,7 +56,11 @@ def create_studio_server(db: ArenaDatabase, host: str = "127.0.0.1", port: int =
                 return
 
             default_view = "replay" if (qs.get("view") or [""])[0] == "replay" else "scoreboard"
-            html_doc = render_arena_html(db.build_comparison_report(exp_id), default_view=default_view)
+            html_doc = render_arena_html(
+                db.build_comparison_report(exp_id),
+                default_view=default_view,
+                lang=req_lang,
+            )
             encoded = html_doc.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

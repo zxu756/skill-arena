@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="newsprint">
+<html lang="en" data-theme="newsprint" data-default-lang="auto">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -25,7 +25,7 @@
       --arm-regression-soft: rgba(201, 59, 34, 0.12);
       --arm-amber: #9E5C11;
       --arm-amber-soft: rgba(158, 92, 17, 0.12);
-      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
       --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     }
 
@@ -67,6 +67,8 @@
       color: var(--ink-primary);
       text-wrap: balance;
       letter-spacing: -0.02em;
+      overflow-wrap: break-word;
+      min-width: 0;
     }
 
     .mono {
@@ -84,12 +86,14 @@
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+      flex-wrap: wrap;
     }
 
     .brand-cluster {
       display: flex;
       align-items: baseline;
       gap: 12px;
+      min-width: 0;
     }
 
     .brand-mark {
@@ -108,6 +112,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .tab-btn, .ghost-btn, .inspect-btn {
@@ -116,6 +121,7 @@
       background: var(--bg-inset);
       color: var(--ink-primary);
       padding: 8px 12px;
+      font-family: var(--font-sans);
       font-size: 12.5px;
       font-weight: 600;
       border-radius: 6px;
@@ -123,16 +129,67 @@
       cursor: pointer;
     }
 
-    .tab-btn:focus-visible, .ghost-btn:focus-visible, .inspect-btn:focus-visible, .replay-select:focus-visible, input:focus-visible {
+    .lang-switch {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px;
+      background: var(--bg-inset);
+      border-radius: 999px;
+      gap: 4px;
+    }
+
+    .lang-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--ink-secondary);
+      padding: 4px 12px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 650;
+      border-radius: 999px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .lang-sep {
+      color: var(--ink-muted);
+      font-size: 11px;
+      user-select: none;
+    }
+
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .filter-pill {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--ink-secondary);
+      padding: 4px 8px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 4px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .tab-btn:focus-visible, .ghost-btn:focus-visible, .inspect-btn:focus-visible,
+    .filter-pill:focus-visible, .lang-btn:focus-visible, .replay-select:focus-visible, input:focus-visible {
       outline: 2px solid var(--arm-control);
       outline-offset: 2px;
     }
 
-    .tab-btn:active, .ghost-btn:active, .inspect-btn:active {
+    .tab-btn:active, .ghost-btn:active, .inspect-btn:active, .filter-pill:active, .lang-btn:active {
       transform: translateY(1px);
     }
 
-    .tab-btn:disabled, .ghost-btn:disabled, .inspect-btn:disabled {
+    .tab-btn:disabled, .ghost-btn:disabled, .inspect-btn:disabled, .filter-pill:disabled, .lang-btn:disabled {
       opacity: 0.48;
       cursor: not-allowed;
     }
@@ -143,6 +200,16 @@
       border-color: var(--ink-primary);
     }
 
+    .lang-btn.is-active {
+      background: var(--ink-primary);
+      color: var(--bg-surface);
+    }
+
+    .filter-pill.is-active {
+      background: var(--bg-inset);
+      color: var(--ink-primary);
+    }
+
     .inspect-btn {
       padding: 4px 12px;
       font-size: 12px;
@@ -151,6 +218,14 @@
 
     .inspect-btn:hover, .ghost-btn:hover {
       border-color: var(--line-strong);
+    }
+
+    .filter-pill:hover, .lang-btn:hover {
+      color: var(--ink-primary);
+    }
+
+    .lang-btn.is-active:hover {
+      color: var(--bg-surface);
     }
 
     .page-shell {
@@ -169,6 +244,7 @@
       gap: 16px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--line-hairline);
+      flex-wrap: wrap;
     }
 
     .exp-banner h1 {
@@ -194,6 +270,7 @@
       padding: 16px 20px;
       border-right: 1px solid var(--line-hairline);
       color: var(--ink-primary);
+      min-width: 0;
     }
 
     .kpi-cell:last-child { border-right: none; }
@@ -235,6 +312,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .panel-head h2 {
@@ -281,6 +359,7 @@
       border-radius: 4px;
       font-size: 11.5px;
       font-weight: 700;
+      white-space: nowrap;
     }
 
     .arm-pill-control {
@@ -306,6 +385,7 @@
       border-radius: 4px;
       font-size: 11.5px;
       font-weight: 650;
+      white-space: nowrap;
     }
 
     .verdict-pass, .delta-win, .status-ok {
@@ -340,14 +420,16 @@
     }
 
     .replay-select {
-      padding: 8px 12px;
+      padding: 8px 32px 8px 12px;
       border-radius: 6px;
       border: 1px solid var(--line-strong);
       background: var(--bg-surface);
       color: var(--ink-primary);
+      font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 600;
-      min-width: 340px;
+      min-width: 320px;
+      max-width: 760px;
     }
 
     .scrubber-group {
@@ -369,6 +451,7 @@
       flex-direction: column;
       gap: 16px;
       color: var(--ink-primary);
+      min-width: 0;
     }
 
     .track-col:first-child {
@@ -379,6 +462,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
       padding-bottom: 12px;
       border-bottom: 2px solid var(--arm-control);
     }
@@ -416,7 +500,7 @@
     }
 
     .step-title { font-weight: 650; font-size: 13px; }
-    .step-metrics { font-size: 11.5px; color: var(--ink-muted); }
+    .step-metrics { font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }
     .step-detail { font-size: 12.5px; color: var(--ink-secondary); }
 
     .diff-box {
@@ -437,17 +521,28 @@
       .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .dual-grid { grid-template-columns: 1fr; }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tab-btn, .ghost-btn, .inspect-btn, .filter-pill, .lang-btn {
+        transform: none !important;
+      }
+    }
   </style>
 </head>
 <body>
   <header class="topbar">
     <div class="brand-cluster">
       <div class="brand-mark">SkillArena</div>
-      <div class="brand-sub">Git-worktree A/B benchmark &amp; wire-tap token telemetry</div>
+      <div class="brand-sub" id="brand-sub">Git-worktree A/B benchmark &amp; wire-tap token telemetry</div>
     </div>
     <nav class="nav-actions" aria-label="Workspace views">
       <button type="button" id="btn-view-scoreboard" class="tab-btn is-active">Scoreboard &amp; economics</button>
       <button type="button" id="btn-view-replay" class="tab-btn ">Dual-track trajectory replay</button>
+      <div class="lang-switch" id="lang-switcher" role="group" aria-label="中文 / EN language switcher">
+        <button type="button" class="lang-btn " data-lang-switch="zh" aria-pressed="false">中文</button>
+        <span class="lang-sep" aria-hidden="true">|</span>
+        <button type="button" class="lang-btn is-active" data-lang-switch="en" aria-pressed="true">EN</button>
+      </div>
       <button type="button" id="btn-theme-toggle" class="ghost-btn">Switch telemetry theme</button>
     </nav>
   </header>
@@ -455,57 +550,56 @@
   <main class="page-shell">
     <section class="exp-banner">
       <div>
-        <h1>Claude Sonnet 4.5: Baseline vs Curated Engineering &amp; Hallmark Skills</h1>
-        <div class="exp-meta-line mono">
-          Experiment exp_36b7e9f1 · Suite: builtin-8 (8 tasks x 3 isolated worktree reps)
-        </div>
+        <h1 id="exp-title">Claude Sonnet 4.5: Baseline vs Curated Engineering &amp; Hallmark Skills</h1>
+        <div class="exp-meta-line mono" id="exp-meta-line">Experiment exp_e8616807 · Suite: builtin-8 (8 tasks x 3 isolated worktree reps)</div>
       </div>
-      <div class="mono panel-note">Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders</div>
+      <div class="mono panel-note" id="grader-note">Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders</div>
     </section>
 
     <section class="kpi-strip" aria-label="Headline experiment metrics">
       <div class="kpi-cell">
-        <div class="kpi-label">Treatment Pass@1 lift</div>
-        <div class="kpi-val mono tone-win">+70.8 pp</div>
-        <div class="kpi-foot mono">Control 29.2% vs Treatment 100.0%</div>
+        <div class="kpi-label" id="kpi1-lbl">Treatment Pass@1 lift</div>
+        <div class="kpi-val mono tone-win" id="kpi1-val">+70.8 pp</div>
+        <div class="kpi-foot mono" id="kpi1-foot">Control 29.2% vs Treatment 100.0%</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">True cost per success</div>
-        <div class="kpi-val mono tone-ctrl">$0.0498</div>
-        <div class="kpi-foot mono">Control amortized: $0.2007 (failed retries included)</div>
+        <div class="kpi-label" id="kpi2-lbl">True cost per success</div>
+        <div class="kpi-val mono tone-ctrl" id="kpi2-val">$0.0498</div>
+        <div class="kpi-foot mono" id="kpi2-foot">Control amortized: $0.2007 (failed retries included)</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">Turn-1 skill context tax</div>
-        <div class="kpi-val mono tone-amber">+4,565 tok</div>
-        <div class="kpi-foot mono">Prompt delta injected on initial request</div>
+        <div class="kpi-label" id="kpi3-lbl">Turn-1 skill context tax</div>
+        <div class="kpi-val mono tone-amber" id="kpi3-val">+4,565 tok</div>
+        <div class="kpi-foot mono" id="kpi3-foot">Prompt delta injected on initial request</div>
       </div>
       <div class="kpi-cell">
-        <div class="kpi-label">Anti-cheat test integrity</div>
-        <div class="kpi-val mono">100.0%</div>
-        <div class="kpi-foot mono">Protected test SHA-256 verified post-run</div>
+        <div class="kpi-label" id="kpi4-lbl">Anti-cheat test integrity</div>
+        <div class="kpi-val mono" id="kpi4-val">100.0%</div>
+        <div class="kpi-foot mono" id="kpi4-foot">Protected test SHA-256 verified post-run</div>
       </div>
     </section>
 
     <div id="view-scoreboard" >
       <section class="panel" style="margin-bottom: 20px;">
         <div class="panel-head">
-          <h2>Contender A/B scoreboard</h2>
-          <span class="panel-note mono">Pass^3 requires 3/3 consecutive clean passes per task</span>
+          <h2 id="sb-heading">Contender A/B scoreboard</h2>
+          <span class="panel-note mono" id="sb-note">Bradley-Terry Elo &amp; Pass^3 (3/3 consecutive clean passes per task)</span>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Contender arm</th>
-              <th>Mounted SKILL.md</th>
-              <th>Pass@1</th>
-              <th>Pass^3 consistency</th>
-              <th>Cost / success</th>
-              <th>Turn-1 context delta</th>
-              <th>Median latency</th>
-              <th>Test integrity</th>
+              <th id="th-arm">Contender arm</th>
+              <th id="th-skill">Mounted SKILL.md</th>
+              <th id="th-elo">BT Elo</th>
+              <th id="th-pass1">Pass@1</th>
+              <th id="th-passk">Pass^3 consistency</th>
+              <th id="th-cps">Cost / success</th>
+              <th id="th-delta">Turn-1 context delta</th>
+              <th id="th-lat">Median latency</th>
+              <th id="th-int">Test integrity</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="lb-tbody">
             
             <tr>
               <td>
@@ -518,6 +612,7 @@
                 </div>
               </td>
               <td class="mono">None (stripped)</td>
+              <td class="mono strong">1500</td>
               <td class="mono strong">29.2%</td>
               <td class="mono">25.0%</td>
               <td class="mono">$0.2007</td>
@@ -537,6 +632,7 @@
                 </div>
               </td>
               <td class="mono">hallmark</td>
+              <td class="mono strong">1788</td>
               <td class="mono strong">100.0%</td>
               <td class="mono">100.0%</td>
               <td class="mono">$0.0498</td>
@@ -551,25 +647,32 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Task-by-task worktree telemetry matrix</h2>
-          <span class="panel-note">Select any row to open synchronized Control vs Treatment trajectory replay</span>
+          <h2 id="mat-heading">Task-by-task worktree telemetry matrix</h2>
+          <div class="filter-bar" role="group" aria-label="Filter benchmark tasks">
+            <button type="button" class="filter-pill is-active" data-task-filter="all">All</button>
+            <button type="button" class="filter-pill" data-task-filter="gains">Skill gains</button>
+            <button type="button" class="filter-pill" data-task-filter="concurrency">Concurrency</button>
+            <button type="button" class="filter-pill" data-task-filter="frontend_craft">Frontend craft</button>
+            <button type="button" class="filter-pill" data-task-filter="refactor_test">Refactor</button>
+            <button type="button" class="filter-pill" data-task-filter="security_hygiene">Security</button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Task ID</th>
-              <th>Engineering benchmark specification</th>
-              <th>Control (mock (claude-sonnet-4-5 · No Skill))</th>
-              <th>Treatment (mock (claude-sonnet-4-5 + hallmark))</th>
-              <th>Outcome delta</th>
-              <th>Trajectory</th>
+              <th id="mth-id">Task ID</th>
+              <th id="mth-spec">Engineering benchmark specification</th>
+              <th id="mth-ctrl">Control (mock (claude-sonnet-4-5 · No Skill))</th>
+              <th id="mth-treat">Treatment (mock (claude-sonnet-4-5 + hallmark))</th>
+              <th id="mth-delta">Outcome delta</th>
+              <th id="mth-traj">Trajectory</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="matrix-tbody">
             
-            <tr>
+            <tr data-task-cat="concurrency" data-task-gain="1">
               <td class="mono task-id-col">conc-01-token-bucket-race</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Thread-safe TokenBucket burst &amp; monotonic refill under 16-thread contention</div>
                 <div class="task-cat-text">Suite domain: concurrency</div>
               </td>
@@ -581,9 +684,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="concurrency" data-task-gain="1">
               <td class="mono task-id-col">conc-02-async-flight-coalescer</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Async SingleFlight request coalescer without stuck keys on upstream failure</div>
                 <div class="task-cat-text">Suite domain: concurrency</div>
               </td>
@@ -595,9 +698,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="refactor_test" data-task-gain="0">
               <td class="mono task-id-col">refac-01-cron-expression-parser</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Extend 5-field cron matcher to support step intervals and comma lists</div>
                 <div class="task-cat-text">Suite domain: refactor_test</div>
               </td>
@@ -609,9 +712,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="refactor_test" data-task-gain="1">
               <td class="mono task-id-col">refac-02-jsonl-ring-compactor</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Bounded JSONL log compactor preserving newest records under max_records and max_bytes</div>
                 <div class="task-cat-text">Suite domain: refactor_test</div>
               </td>
@@ -623,9 +726,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="security_hygiene" data-task-gain="0">
               <td class="mono task-id-col">sec-01-dsn-credential-redactor</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs</div>
                 <div class="task-cat-text">Suite domain: security_hygiene</div>
               </td>
@@ -637,9 +740,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="security_hygiene" data-task-gain="1">
               <td class="mono task-id-col">sec-02-zip-slip-tar-extractor</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Prevent Zip-Slip and symlink escape during tar archive extraction</div>
                 <div class="task-cat-text">Suite domain: security_hygiene</div>
               </td>
@@ -651,9 +754,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="frontend_craft" data-task-gain="1">
               <td class="mono task-id-col">ui-01-billing-ledger-slop</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Refactor AI-slop SaaS billing ledger HTML to strict 4px grid &amp; Hallmark compliance</div>
                 <div class="task-cat-text">Suite domain: frontend_craft</div>
               </td>
@@ -665,9 +768,9 @@
               </td>
             </tr>
             
-            <tr>
+            <tr data-task-cat="frontend_craft" data-task-gain="1">
               <td class="mono task-id-col">ui-02-incident-status-board</td>
-              <td>
+              <td class="task-spec-col">
                 <div class="task-title-text">Build zero-sloplint regional incident status board HTML with tabular uptime metrics</div>
                 <div class="task-cat-text">Suite domain: frontend_craft</div>
               </td>
@@ -686,12 +789,17 @@
 
     <section id="view-replay" class="panel" hidden>
       <div class="replay-toolbar">
-        <div>
-          <label for="replay-task-select" class="panel-note" style="margin-right: 8px;">Benchmark task:</label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label for="replay-task-select" class="panel-note" id="rep-task-lbl">Benchmark task:</label>
           <select id="replay-task-select" class="replay-select"></select>
         </div>
+        <div class="filter-bar" role="group" aria-label="Replay detail mode">
+          <button type="button" class="filter-pill is-active" data-replay-mode="both" id="rf-both">Steps &amp; diff</button>
+          <button type="button" class="filter-pill" data-replay-mode="steps" id="rf-steps">Steps only</button>
+          <button type="button" class="filter-pill" data-replay-mode="diff" id="rf-diff">Worktree diff</button>
+        </div>
         <div class="scrubber-group">
-          <span>Synchronized step cursor:</span>
+          <span id="rep-cursor-lbl">Synchronized step cursor:</span>
           <input type="range" id="step-scrubber" min="1" max="5" value="3">
           <span id="step-scrubber-label" class="mono strong">Step 3</span>
         </div>
@@ -700,18 +808,24 @@
     </section>
   </main>
 
-  <script id="arena-report-data" type="application/json">{"experiment_id": "exp_36b7e9f1", "title": "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills", "suite_name": "builtin-8", "k_reps": 3, "created_at": "2026-11-13T04:06:46.440201+00:00", "contenders": [{"contender_id": "arm_control", "label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "role": "control", "cli": "mock:baseline", "model": "claude-sonnet-4-5", "skill_paths": [], "agents_md_snippet": null, "strip_default_skills": true, "extra_args": []}, {"contender_id": "arm_treatment", "label": "mock (claude-sonnet-4-5 + hallmark)", "role": "treatment", "cli": "mock:skilled", "model": "claude-sonnet-4-5", "skill_paths": ["~/.agents/skills/hallmark"], "agents_md_snippet": null, "strip_default_skills": true, "extra_args": []}], "leaderboard": [{"contender_id": "arm_control", "label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "role": "control", "cli": "mock:baseline", "model": "claude-sonnet-4-5", "skills_mounted": [], "trials_total": 24, "trials_passed": 7, "tasks_total": 8, "pass_at_1": 0.2917, "pass_hat_k": 0.25, "k_reps": 3, "total_spend_usd": 1.4048, "cost_per_success_usd": 0.2007, "mean_first_turn_tokens": 1927, "context_overhead_delta_tokens": 0, "median_latency_ms": 9806, "anti_cheat_integrity_rate": 1.0}, {"contender_id": "arm_treatment", "label": "mock (claude-sonnet-4-5 + hallmark)", "role": "treatment", "cli": "mock:skilled", "model": "claude-sonnet-4-5", "skills_mounted": ["hallmark"], "trials_total": 24, "trials_passed": 24, "tasks_total": 8, "pass_at_1": 1.0, "pass_hat_k": 1.0, "k_reps": 3, "total_spend_usd": 1.1956, "cost_per_success_usd": 0.0498, "mean_first_turn_tokens": 6492, "context_overhead_delta_tokens": 4565, "median_latency_ms": 5050, "anti_cheat_integrity_rate": 1.0}], "task_matrix": [{"task_id": "conc-01-token-bucket-race", "title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "category": "concurrency", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0596, "mean_tokens": 13469, "mean_latency_ms": 9528, "rep1_trial": {"trial_id": "tr_28b75ad807", "experiment_id": "exp_36b7e9f1", "task_id": "conc-01-token-bucket-race", "task_title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "task_category": "concurrency", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1935, "total_prompt_tokens": 10980, "cached_prompt_tokens": 4068, "completion_tokens": 2580, "ttft_ms": 465, "total_latency_ms": 8860, "total_cost_usd": 0.060657, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 9, "diff_lines_removed": 8, "diff_bloat_ratio": 0.425, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +9/-8 (0.42x budget)", "stdout_tail": ".F\n======================================================================\nFAIL: test_rejects_negative_or_excess_request (tests.test_rate_limiter.TokenBucketTest.test_rejects_negative_or_excess_request)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-2tab3vfc/conc-01-token-bucket-race__arm_control__r1/tests/test_rate_limiter.py\", line 24, in test_rejects_negative_or_excess_request\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nFAILED (failures=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2215, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1935, "cached_tokens": 0, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.01548}, {"step_index": 2, "timestamp_ms": 4430, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened rate_limiter.py, tests/test_rate_limiter.py.", "prompt_tokens": 2475, "cached_tokens": 1113, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.014095}, {"step_index": 3, "timestamp_ms": 6645, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 3015, "cached_tokens": 1356, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.015059}, {"step_index": 4, "timestamp_ms": 8860, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3555, "cached_tokens": 1599, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.016023}, {"step_index": 5, "timestamp_ms": 8905, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +9/-8 (0.42x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/rate_limiter.py b/rate_limiter.py\nindex 6d09f07..73103bb 100644\n--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1,3 +1,4 @@\n+import threading\n import time\n \n class TokenBucket:\n@@ -6,14 +7,14 @@ class TokenBucket:\n         self.tokens = float(capacity)\n         self.refill_per_sec = float(refill_per_sec)\n         self.last_ts = time.monotonic()\n+        self._lock = threading.Lock()\n \n     def try_acquire(self, amount: int = 1) -> bool:\n-        now = time.monotonic()\n-        elapsed = max(0.0, now - self.last_ts)\n-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n-        if self.tokens >= amount:\n-            time.sleep(0.0002)\n-            self.tokens -= amount\n+        with self._lock:\n+            now = time.monotonic()\n+            self.tokens = min(self.capacity, self.tokens + max(0.0, now - self.last_ts) * self.refill_per_sec)\n             self.last_ts = now\n-            return True\n-        return False\n+            if self.tokens >= amount:\n+                self.tokens -= amount\n+                return True\n+            return False\n", "started_at": "2026-11-13T04:06:46.440935+00:00", "finished_at": "2026-11-13T04:06:47.081472+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0506, "mean_tokens": 22326, "mean_latency_ms": 4960, "rep1_trial": {"trial_id": "tr_e94977ad2c", "experiment_id": "exp_36b7e9f1", "task_id": "conc-01-token-bucket-race", "task_title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "task_category": "concurrency", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6538, "total_prompt_tokens": 21234, "cached_prompt_tokens": 11168, "completion_tokens": 1098, "ttft_ms": 486, "total_latency_ms": 5148, "total_cost_usd": 0.050019, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 12, "diff_lines_removed": 8, "diff_bloat_ratio": 0.5, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +12/-8 (0.50x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1716, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6538, "cached_tokens": 0, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.025104}, {"step_index": 3, "timestamp_ms": 3432, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked rate_limiter.py, tests/test_rate_limiter.py and test suite.", "prompt_tokens": 7078, "cached_tokens": 5379, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.012201}, {"step_index": 4, "timestamp_ms": 5148, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated rate_limiter.py with minimal diff.", "prompt_tokens": 7618, "cached_tokens": 5789, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.012714}, {"step_index": 5, "timestamp_ms": 5193, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +12/-8 (0.50x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/rate_limiter.py b/rate_limiter.py\nindex 6d09f07..e7ca4de 100644\n--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1,3 +1,4 @@\n+import threading\n import time\n \n class TokenBucket:\n@@ -6,14 +7,17 @@ class TokenBucket:\n         self.tokens = float(capacity)\n         self.refill_per_sec = float(refill_per_sec)\n         self.last_ts = time.monotonic()\n+        self._lock = threading.Lock()\n \n     def try_acquire(self, amount: int = 1) -> bool:\n-        now = time.monotonic()\n-        elapsed = max(0.0, now - self.last_ts)\n-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n-        if self.tokens >= amount:\n-            time.sleep(0.0002)\n-            self.tokens -= amount\n+        if amount <= 0:\n+            raise ValueError('amount must be positive')\n+        with self._lock:\n+            now = time.monotonic()\n+            elapsed = max(0.0, now - self.last_ts)\n+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n             self.last_ts = now\n-            return True\n-        return False\n+            if self.tokens >= amount:\n+                self.tokens -= amount\n+                return True\n+            return False\n", "started_at": "2026-11-13T04:06:48.334092+00:00", "finished_at": "2026-11-13T04:06:49.053129+00:00"}}}}, {"task_id": "conc-02-async-flight-coalescer", "title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "category": "concurrency", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0584, "mean_tokens": 13387, "mean_latency_ms": 10220, "rep1_trial": {"trial_id": "tr_af16dc6efe", "experiment_id": "exp_36b7e9f1", "task_id": "conc-02-async-flight-coalescer", "task_title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "task_category": "concurrency", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1919, "total_prompt_tokens": 10916, "cached_prompt_tokens": 4047, "completion_tokens": 2516, "ttft_ms": 529, "total_latency_ms": 10716, "total_cost_usd": 0.059562, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 6, "diff_lines_removed": 4, "diff_bloat_ratio": 0.222, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +6/-4 (0.22x budget)", "stdout_tail": "~~~~~~~~~^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/base_events.py\", line 720, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/private/var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-2tab3vfc/conc-02-async-flight-coalescer__arm_control__r1/tests/test_coalescer.py\", line 17, in scenario\n    results = await asyncio.wait_for(asyncio.gather(\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        sf.do('k1', flaky), sf.do('k1', flaky), return_exceptions=True\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ), timeout=0.5)\n    ^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/tasks.py\", line 485, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/timeouts.py\", line 115, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n\n----------------------------------------------------------------------\nRan 1 test in 0.507s\n\nFAILED (errors=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2679, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1919, "cached_tokens": 0, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.015192}, {"step_index": 2, "timestamp_ms": 5358, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened coalescer.py, tests/test_coalescer.py.", "prompt_tokens": 2459, "cached_tokens": 1106, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.013826}, {"step_index": 3, "timestamp_ms": 8037, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2999, "cached_tokens": 1349, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.01479}, {"step_index": 4, "timestamp_ms": 10716, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3539, "cached_tokens": 1592, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.015754}, {"step_index": 5, "timestamp_ms": 10761, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +6/-4 (0.22x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/coalescer.py b/coalescer.py\nindex d2938c8..def0ab3 100644\n--- a/coalescer.py\n+++ b/coalescer.py\n@@ -12,7 +12,9 @@ class SingleFlight:\n             return await self._inflight[key]\n         fut = asyncio.get_running_loop().create_future()\n         self._inflight[key] = fut\n-        res = await fn()\n-        fut.set_result(res)\n-        del self._inflight[key]\n-        return res\n+        try:\n+            res = await fn()\n+            fut.set_result(res)\n+            return res\n+        finally:\n+            self._inflight.pop(key, None)\n", "started_at": "2026-11-13T04:06:50.470378+00:00", "finished_at": "2026-11-13T04:06:51.631970+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0484, "mean_tokens": 21922, "mean_latency_ms": 4808, "rep1_trial": {"trial_id": "tr_c09e07bca2", "experiment_id": "exp_36b7e9f1", "task_id": "conc-02-async-flight-coalescer", "task_title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "task_category": "concurrency", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6477, "total_prompt_tokens": 21051, "cached_prompt_tokens": 11075, "completion_tokens": 1185, "ttft_ms": 405, "total_latency_ms": 5085, "total_cost_usd": 0.051026, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 12, "diff_lines_removed": 9, "diff_bloat_ratio": 0.467, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +12/-9 (0.47x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.045s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1695, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6477, "cached_tokens": 0, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.025356}, {"step_index": 3, "timestamp_ms": 3390, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked coalescer.py, tests/test_coalescer.py and test suite.", "prompt_tokens": 7017, "cached_tokens": 5332, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.01258}, {"step_index": 4, "timestamp_ms": 5085, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated coalescer.py with minimal diff.", "prompt_tokens": 7557, "cached_tokens": 5743, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.01309}, {"step_index": 5, "timestamp_ms": 5130, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +12/-9 (0.47x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/coalescer.py b/coalescer.py\nindex d2938c8..a853181 100644\n--- a/coalescer.py\n+++ b/coalescer.py\n@@ -5,14 +5,17 @@ T = TypeVar('T')\n \n class SingleFlight:\n     def __init__(self) -> None:\n-        self._inflight: dict[str, asyncio.Future] = {}\n+        self._tasks: dict[str, asyncio.Task] = {}\n \n     async def do(self, key: str, fn: Callable[[], Awaitable[T]]) -> T:\n-        if key in self._inflight:\n-            return await self._inflight[key]\n-        fut = asyncio.get_running_loop().create_future()\n-        self._inflight[key] = fut\n-        res = await fn()\n-        fut.set_result(res)\n-        del self._inflight[key]\n-        return res\n+        task = self._tasks.get(key)\n+        is_owner = False\n+        if task is None:\n+            task = asyncio.create_task(fn())\n+            self._tasks[key] = task\n+            is_owner = True\n+        try:\n+            return await asyncio.shield(task)\n+        finally:\n+            if is_owner:\n+                self._tasks.pop(key, None)\n", "started_at": "2026-11-13T04:06:53.961532+00:00", "finished_at": "2026-11-13T04:06:54.702711+00:00"}}}}, {"task_id": "refac-01-cron-expression-parser", "title": "Extend 5-field cron matcher to support step intervals and comma lists", "category": "refactor_test", "arms": {"arm_control": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0589, "mean_tokens": 13349, "mean_latency_ms": 9928, "rep1_trial": {"trial_id": "tr_e4734e2777", "experiment_id": "exp_36b7e9f1", "task_id": "refac-01-cron-expression-parser", "task_title": "Extend 5-field cron matcher to support step intervals and comma lists", "task_category": "refactor_test", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1972, "total_prompt_tokens": 11128, "cached_prompt_tokens": 4119, "completion_tokens": 2368, "ttft_ms": 442, "total_latency_ms": 10448, "total_cost_usd": 0.057783, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 22, "diff_lines_removed": 4, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2612, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 1972, "cached_tokens": 0, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.014796}, {"step_index": 2, "timestamp_ms": 5224, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked cron_eval.py, tests/test_cron_eval.py and test suite.", "prompt_tokens": 2512, "cached_tokens": 1130, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.013365}, {"step_index": 3, "timestamp_ms": 7836, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated cron_eval.py with minimal diff.", "prompt_tokens": 3052, "cached_tokens": 1373, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.014329}, {"step_index": 4, "timestamp_ms": 10493, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/cron_eval.py b/cron_eval.py\nindex 2eb1511..02f7a03 100644\n--- a/cron_eval.py\n+++ b/cron_eval.py\n@@ -1,5 +1,23 @@\n def expand_field(expr: str, min_val: int, max_val: int) -> list[int]:\n-    if expr == '*':\n-        return list(range(min_val, max_val + 1))\n-    val = int(expr)\n-    return [val]\n+    values: set[int] = set()\n+    for part in expr.split(','):\n+        part = part.strip()\n+        step = 1\n+        if '/' in part:\n+            base, step_s = part.split('/', 1)\n+            step = int(step_s)\n+            if step <= 0:\n+                raise ValueError('step must be > 0')\n+        else:\n+            base = part\n+        if base == '*':\n+            lo, hi = min_val, max_val\n+        elif '-' in base:\n+            lo_s, hi_s = base.split('-', 1)\n+            lo, hi = int(lo_s), int(hi_s)\n+        else:\n+            lo = hi = int(base)\n+        if lo < min_val or hi > max_val or lo > hi:\n+            raise ValueError('cron field out of bounds')\n+        values.update(range(lo, hi + 1, step))\n+    return sorted(values)\n", "started_at": "2026-11-13T04:07:05.155461+00:00", "finished_at": "2026-11-13T04:07:05.772433+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0504, "mean_tokens": 22330, "mean_latency_ms": 4897, "rep1_trial": {"trial_id": "tr_8bb6e690e6", "experiment_id": "exp_36b7e9f1", "task_id": "refac-01-cron-expression-parser", "task_title": "Extend 5-field cron matcher to support step intervals and comma lists", "task_category": "refactor_test", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6501, "total_prompt_tokens": 21123, "cached_prompt_tokens": 11112, "completion_tokens": 1167, "ttft_ms": 449, "total_latency_ms": 5037, "total_cost_usd": 0.050871, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 22, "diff_lines_removed": 4, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1679, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6501, "cached_tokens": 0, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.025338}, {"step_index": 3, "timestamp_ms": 3358, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked cron_eval.py, tests/test_cron_eval.py and test suite.", "prompt_tokens": 7041, "cached_tokens": 5351, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.01251}, {"step_index": 4, "timestamp_ms": 5037, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated cron_eval.py with minimal diff.", "prompt_tokens": 7581, "cached_tokens": 5761, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.013023}, {"step_index": 5, "timestamp_ms": 5082, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/cron_eval.py b/cron_eval.py\nindex 2eb1511..02f7a03 100644\n--- a/cron_eval.py\n+++ b/cron_eval.py\n@@ -1,5 +1,23 @@\n def expand_field(expr: str, min_val: int, max_val: int) -> list[int]:\n-    if expr == '*':\n-        return list(range(min_val, max_val + 1))\n-    val = int(expr)\n-    return [val]\n+    values: set[int] = set()\n+    for part in expr.split(','):\n+        part = part.strip()\n+        step = 1\n+        if '/' in part:\n+            base, step_s = part.split('/', 1)\n+            step = int(step_s)\n+            if step <= 0:\n+                raise ValueError('step must be > 0')\n+        else:\n+            base = part\n+        if base == '*':\n+            lo, hi = min_val, max_val\n+        elif '-' in base:\n+            lo_s, hi_s = base.split('-', 1)\n+            lo, hi = int(lo_s), int(hi_s)\n+        else:\n+            lo = hi = int(base)\n+        if lo < min_val or hi > max_val or lo > hi:\n+            raise ValueError('cron field out of bounds')\n+        values.update(range(lo, hi + 1, step))\n+    return sorted(values)\n", "started_at": "2026-11-13T04:07:07.033278+00:00", "finished_at": "2026-11-13T04:07:07.706935+00:00"}}}}, {"task_id": "refac-02-jsonl-ring-compactor", "title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "category": "refactor_test", "arms": {"arm_control": {"passed_count": 1, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0577, "mean_tokens": 13368, "mean_latency_ms": 10571, "rep1_trial": {"trial_id": "tr_93a09c520a", "experiment_id": "exp_36b7e9f1", "task_id": "refac-02-jsonl-ring-compactor", "task_title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "task_category": "refactor_test", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1863, "total_prompt_tokens": 10692, "cached_prompt_tokens": 3972, "completion_tokens": 2292, "ttft_ms": 513, "total_latency_ms": 10492, "total_cost_usd": 0.055731, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 23, "diff_lines_removed": 3, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2623, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 1863, "cached_tokens": 0, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.014184}, {"step_index": 2, "timestamp_ms": 5246, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked compactor.py, tests/test_compactor.py and test suite.", "prompt_tokens": 2403, "cached_tokens": 1081, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.012885}, {"step_index": 3, "timestamp_ms": 7869, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated compactor.py with minimal diff.", "prompt_tokens": 2943, "cached_tokens": 1324, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.013849}, {"step_index": 4, "timestamp_ms": 10537, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/compactor.py b/compactor.py\nindex e735459..7c8091f 100644\n--- a/compactor.py\n+++ b/compactor.py\n@@ -1,7 +1,27 @@\n+import json\n from pathlib import Path\n \n def compact_jsonl(path: Path, max_records: int, max_bytes: int) -> int:\n-    lines = path.read_text(encoding='utf-8').splitlines()\n-    kept = lines[-max_records:]\n-    path.write_text('\\n'.join(kept) + '\\n', encoding='utf-8')\n+    valid: list[str] = []\n+    for raw_line in path.read_text(encoding='utf-8').splitlines():\n+        stripped = raw_line.strip()\n+        if not stripped:\n+            continue\n+        try:\n+            json.loads(stripped)\n+            valid.append(stripped)\n+        except json.JSONDecodeError:\n+            continue\n+    selected_rev: list[str] = []\n+    used_bytes = 0\n+    for record in reversed(valid):\n+        if len(selected_rev) >= max_records:\n+            break\n+        rec_bytes = len((record + '\\n').encode('utf-8'))\n+        if used_bytes + rec_bytes > max_bytes:\n+            break\n+        selected_rev.append(record)\n+        used_bytes += rec_bytes\n+    kept = list(reversed(selected_rev))\n+    path.write_text(('\\n'.join(kept) + '\\n') if kept else '', encoding='utf-8')\n     return len(kept)\n", "started_at": "2026-11-13T04:07:09.138597+00:00", "finished_at": "2026-11-13T04:07:09.751026+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0497, "mean_tokens": 22200, "mean_latency_ms": 4942, "rep1_trial": {"trial_id": "tr_125923e070", "experiment_id": "exp_36b7e9f1", "task_id": "refac-02-jsonl-ring-compactor", "task_title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "task_category": "refactor_test", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6548, "total_prompt_tokens": 21264, "cached_prompt_tokens": 11183, "completion_tokens": 1128, "ttft_ms": 516, "total_latency_ms": 4878, "total_cost_usd": 0.050518, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 23, "diff_lines_removed": 3, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1626, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6548, "cached_tokens": 0, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.025284}, {"step_index": 3, "timestamp_ms": 3252, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked compactor.py, tests/test_compactor.py and test suite.", "prompt_tokens": 7088, "cached_tokens": 5386, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.012362}, {"step_index": 4, "timestamp_ms": 4878, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated compactor.py with minimal diff.", "prompt_tokens": 7628, "cached_tokens": 5797, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.012872}, {"step_index": 5, "timestamp_ms": 4923, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/compactor.py b/compactor.py\nindex e735459..7c8091f 100644\n--- a/compactor.py\n+++ b/compactor.py\n@@ -1,7 +1,27 @@\n+import json\n from pathlib import Path\n \n def compact_jsonl(path: Path, max_records: int, max_bytes: int) -> int:\n-    lines = path.read_text(encoding='utf-8').splitlines()\n-    kept = lines[-max_records:]\n-    path.write_text('\\n'.join(kept) + '\\n', encoding='utf-8')\n+    valid: list[str] = []\n+    for raw_line in path.read_text(encoding='utf-8').splitlines():\n+        stripped = raw_line.strip()\n+        if not stripped:\n+            continue\n+        try:\n+            json.loads(stripped)\n+            valid.append(stripped)\n+        except json.JSONDecodeError:\n+            continue\n+    selected_rev: list[str] = []\n+    used_bytes = 0\n+    for record in reversed(valid):\n+        if len(selected_rev) >= max_records:\n+            break\n+        rec_bytes = len((record + '\\n').encode('utf-8'))\n+        if used_bytes + rec_bytes > max_bytes:\n+            break\n+        selected_rev.append(record)\n+        used_bytes += rec_bytes\n+    kept = list(reversed(selected_rev))\n+    path.write_text(('\\n'.join(kept) + '\\n') if kept else '', encoding='utf-8')\n     return len(kept)\n", "started_at": "2026-11-13T04:07:11.007013+00:00", "finished_at": "2026-11-13T04:07:11.684973+00:00"}}}}, {"task_id": "sec-01-dsn-credential-redactor", "title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "category": "security_hygiene", "arms": {"arm_control": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.058, "mean_tokens": 13336, "mean_latency_ms": 9235, "rep1_trial": {"trial_id": "tr_53efee7105", "experiment_id": "exp_36b7e9f1", "task_id": "sec-01-dsn-credential-redactor", "task_title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "task_category": "security_hygiene", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 2027, "total_prompt_tokens": 11348, "cached_prompt_tokens": 4194, "completion_tokens": 2348, "ttft_ms": 457, "total_latency_ms": 9228, "total_cost_usd": 0.057939, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 8, "diff_lines_removed": 1, "diff_bloat_ratio": 0.257, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2307, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 2027, "cached_tokens": 0, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.014886}, {"step_index": 2, "timestamp_ms": 4614, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked sanitizer.py, tests/test_sanitizer.py and test suite.", "prompt_tokens": 2567, "cached_tokens": 1155, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.013387}, {"step_index": 3, "timestamp_ms": 6921, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated sanitizer.py with minimal diff.", "prompt_tokens": 3107, "cached_tokens": 1398, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.014351}, {"step_index": 4, "timestamp_ms": 9273, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/sanitizer.py b/sanitizer.py\nindex 5d01be1..2c76b7f 100644\n--- a/sanitizer.py\n+++ b/sanitizer.py\n@@ -1,4 +1,11 @@\n import re\n \n+_DSN_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://[^:\\s/@]+):([^@\\s]+)@')\n+_BEARER_RE = re.compile(r'\\bBearer\\s+[A-Za-z0-9._~+/-]+=*')\n+_SK_RE = re.compile(r'\\bsk-[A-Za-z0-9_-]{10,}')\n+\n def redact_secrets(text: str) -> str:\n-    return re.sub(r'sk-[A-Za-z0-9_-]{10,}', '[REDACTED]', text)\n+    out = _DSN_RE.sub(r'\\1:[REDACTED]@', text)\n+    out = _BEARER_RE.sub('Bearer [REDACTED]', out)\n+    out = _SK_RE.sub('[REDACTED]', out)\n+    return out\n", "started_at": "2026-11-13T04:07:13.144690+00:00", "finished_at": "2026-11-13T04:07:13.761388+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0498, "mean_tokens": 22286, "mean_latency_ms": 5290, "rep1_trial": {"trial_id": "tr_fd07c0a666", "experiment_id": "exp_36b7e9f1", "task_id": "sec-01-dsn-credential-redactor", "task_title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "task_category": "security_hygiene", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6515, "total_prompt_tokens": 21165, "cached_prompt_tokens": 11133, "completion_tokens": 1119, "ttft_ms": 403, "total_latency_ms": 5259, "total_cost_usd": 0.050221, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 8, "diff_lines_removed": 1, "diff_bloat_ratio": 0.257, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1753, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6515, "cached_tokens": 0, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.02514}, {"step_index": 3, "timestamp_ms": 3506, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked sanitizer.py, tests/test_sanitizer.py and test suite.", "prompt_tokens": 7055, "cached_tokens": 5361, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.012285}, {"step_index": 4, "timestamp_ms": 5259, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated sanitizer.py with minimal diff.", "prompt_tokens": 7595, "cached_tokens": 5772, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.012796}, {"step_index": 5, "timestamp_ms": 5304, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/sanitizer.py b/sanitizer.py\nindex 5d01be1..2c76b7f 100644\n--- a/sanitizer.py\n+++ b/sanitizer.py\n@@ -1,4 +1,11 @@\n import re\n \n+_DSN_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://[^:\\s/@]+):([^@\\s]+)@')\n+_BEARER_RE = re.compile(r'\\bBearer\\s+[A-Za-z0-9._~+/-]+=*')\n+_SK_RE = re.compile(r'\\bsk-[A-Za-z0-9_-]{10,}')\n+\n def redact_secrets(text: str) -> str:\n-    return re.sub(r'sk-[A-Za-z0-9_-]{10,}', '[REDACTED]', text)\n+    out = _DSN_RE.sub(r'\\1:[REDACTED]@', text)\n+    out = _BEARER_RE.sub('Bearer [REDACTED]', out)\n+    out = _SK_RE.sub('[REDACTED]', out)\n+    return out\n", "started_at": "2026-11-13T04:07:15.016383+00:00", "finished_at": "2026-11-13T04:07:15.693240+00:00"}}}}, {"task_id": "sec-02-zip-slip-tar-extractor", "title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "category": "security_hygiene", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0589, "mean_tokens": 13381, "mean_latency_ms": 9857, "rep1_trial": {"trial_id": "tr_db55989fdb", "experiment_id": "exp_36b7e9f1", "task_id": "sec-02-zip-slip-tar-extractor", "task_title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "task_category": "security_hygiene", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1908, "total_prompt_tokens": 10872, "cached_prompt_tokens": 4032, "completion_tokens": 2352, "ttft_ms": 398, "total_latency_ms": 10352, "total_cost_usd": 0.057009, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 4, "diff_lines_removed": 4, "diff_bloat_ratio": 0.123, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +4/-4 (0.12x budget)", "stdout_tail": "cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2488, in extractall\n    tarinfo, unfiltered = self._get_extract_tarinfo(\n                          ~~~~~~~~~~~~~~~~~~~~~~~~~^\n        member, filter_function, path)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2578, in _get_extract_tarinfo\n    self._handle_fatal_error(e)\n    ~~~~~~~~~~~~~~~~~~~~~~~~^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2576, in _get_extract_tarinfo\n    filtered = filter_function(unfiltered, path)\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 905, in data_filter\n    new_attrs = _get_filtered_attrs(member, dest_path, True)\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 872, in _get_filtered_attrs\n    raise AbsoluteLinkError(member)\ntarfile.AbsoluteLinkError: 'link_out' is a link to an absolute path\n\n----------------------------------------------------------------------\nRan 1 test in 0.004s\n\nFAILED (errors=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2588, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1908, "cached_tokens": 0, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.014544}, {"step_index": 2, "timestamp_ms": 5176, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened archive_guard.py, tests/test_archive_guard.py.", "prompt_tokens": 2448, "cached_tokens": 1101, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.013191}, {"step_index": 3, "timestamp_ms": 7764, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2988, "cached_tokens": 1344, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.014155}, {"step_index": 4, "timestamp_ms": 10352, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3528, "cached_tokens": 1587, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.015119}, {"step_index": 5, "timestamp_ms": 10397, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +4/-4 (0.12x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/archive_guard.py b/archive_guard.py\nindex 11efa3e..08a737c 100644\n--- a/archive_guard.py\n+++ b/archive_guard.py\n@@ -3,9 +3,9 @@ import tarfile\n \n def safe_extract_tar(tar_path: Path, dest_dir: Path) -> list[Path]:\n     dest_dir.mkdir(parents=True, exist_ok=True)\n-    extracted: list[Path] = []\n     with tarfile.open(tar_path, 'r:*') as tf:\n-        tf.extractall(path=dest_dir)\n         for m in tf.getmembers():\n-            extracted.append(dest_dir / m.name)\n-    return extracted\n+            if '..' in m.name:\n+                raise PermissionError('unsafe path')\n+        tf.extractall(path=dest_dir)\n+        return [dest_dir / m.name for m in tf.getmembers()]\n", "started_at": "2026-11-13T04:07:17.106276+00:00", "finished_at": "2026-11-13T04:07:17.738289+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0496, "mean_tokens": 22140, "mean_latency_ms": 4942, "rep1_trial": {"trial_id": "tr_4f30bebe50", "experiment_id": "exp_36b7e9f1", "task_id": "sec-02-zip-slip-tar-extractor", "task_title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "task_category": "security_hygiene", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6400, "total_prompt_tokens": 20820, "cached_prompt_tokens": 10958, "completion_tokens": 954, "ttft_ms": 468, "total_latency_ms": 5274, "total_cost_usd": 0.047183, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 27, "diff_lines_removed": 3, "diff_bloat_ratio": 0.462, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +27/-3 (0.46x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.002s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1758, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6400, "cached_tokens": 0, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.02397}, {"step_index": 3, "timestamp_ms": 3516, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked archive_guard.py, tests/test_archive_guard.py and test suite.", "prompt_tokens": 6940, "cached_tokens": 5274, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.01135}, {"step_index": 4, "timestamp_ms": 5274, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated archive_guard.py with minimal diff.", "prompt_tokens": 7480, "cached_tokens": 5684, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.011863}, {"step_index": 5, "timestamp_ms": 5319, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +27/-3 (0.46x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/archive_guard.py b/archive_guard.py\nindex 11efa3e..1429980 100644\n--- a/archive_guard.py\n+++ b/archive_guard.py\n@@ -1,11 +1,35 @@\n from pathlib import Path\n import tarfile\n \n+def _ensure_within(base_resolved: Path, target: Path) -> Path:\n+    resolved = target.resolve(strict=False)\n+    if resolved != base_resolved and base_resolved not in resolved.parents:\n+        raise PermissionError(f'Archive entry escapes destination: {target}')\n+    return resolved\n+\n def safe_extract_tar(tar_path: Path, dest_dir: Path) -> list[Path]:\n     dest_dir.mkdir(parents=True, exist_ok=True)\n+    base = dest_dir.resolve()\n     extracted: list[Path] = []\n     with tarfile.open(tar_path, 'r:*') as tf:\n-        tf.extractall(path=dest_dir)\n-        for m in tf.getmembers():\n-            extracted.append(dest_dir / m.name)\n+        members = tf.getmembers()\n+        for m in members:\n+            if m.name.startswith('/') or '..' in Path(m.name).parts:\n+                raise PermissionError(f'Illegal archive member path: {m.name}')\n+            target = _ensure_within(base, base / m.name)\n+            if m.issym() or m.islnk():\n+                link_target = (target.parent / m.linkname) if not m.linkname.startswith('/') else Path(m.linkname)\n+                _ensure_within(base, link_target)\n+            if m.isdev():\n+                raise PermissionError('Special device files are forbidden')\n+        for m in members:\n+            target = base / m.name\n+            if m.isdir():\n+                target.mkdir(parents=True, exist_ok=True)\n+            elif m.isfile():\n+                target.parent.mkdir(parents=True, exist_ok=True)\n+                src = tf.extractfile(m)\n+                if src is not None:\n+                    target.write_bytes(src.read())\n+                    extracted.append(target)\n     return extracted\n", "started_at": "2026-11-13T04:07:18.994790+00:00", "finished_at": "2026-11-13T04:07:19.682451+00:00"}}}}, {"task_id": "ui-01-billing-ledger-slop", "title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "category": "frontend_craft", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0583, "mean_tokens": 13344, "mean_latency_ms": 9379, "rep1_trial": {"trial_id": "tr_819da79187", "experiment_id": "exp_36b7e9f1", "task_id": "ui-01-billing-ledger-slop", "task_title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "task_category": "frontend_craft", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1874, "total_prompt_tokens": 10736, "cached_prompt_tokens": 3987, "completion_tokens": 2576, "ttft_ms": 484, "total_latency_ms": 9096, "total_cost_usd": 0.060084, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 1, "diff_lines_removed": 1, "diff_bloat_ratio": 0.029, "sloplint_fails": 4, "sloplint_warns": 2, "summary": "Tests exited with code 1; Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "stdout_tail": "p__arm_control__r1/tests/test_billing_dom.py\", line 7, in test_contains_ledger_landmarks_and_amount\n    self.assertIn('id=\"invoice-total\"', html)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'id=\"invoice-total\"' not found in \"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>:root{--bg:#F9F7F1;--ink:#161514;}body{background:var(--bg);color:var(--ink);padding:14px;}<\/style><\/head><body><h1>Usage Ledger <span>Pro<\/span><\/h1><div id='invoice-total'>$1,420.00<\/div><table><tr><td>Compute<\/td><\/tr><\/table><\/body><\/html>\\n\"\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\nFAIL [copy-dash]: Em-dash or en-dash found in visible copy or <title>.\nFAIL [heading-span]: Nested <span> inside <h1>/<h2> splits heading tone.\nWARN [meta-description]: Missing <meta name=\"description\"> tag.\nWARN [heading-wrap]: Missing text-wrap: balance on headings.\nFAIL [off-4px-grid]: Off-scale spacing value 14px in 'padding:14px'.\nsloplint.mjs: /var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-2tab3vfc/ui-01-billing-ledger-slop__arm_control__r1/ui/billing.html"}, "steps": [{"step_index": 1, "timestamp_ms": 2274, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1874, "cached_tokens": 0, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.015282}, {"step_index": 2, "timestamp_ms": 4548, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened ui/billing.html, tests/test_billing_dom.py.", "prompt_tokens": 2414, "cached_tokens": 1086, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.01397}, {"step_index": 3, "timestamp_ms": 6822, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2954, "cached_tokens": 1329, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.014934}, {"step_index": 4, "timestamp_ms": 9096, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3494, "cached_tokens": 1572, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.015898}, {"step_index": 5, "timestamp_ms": 9141, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/billing.html b/ui/billing.html\nindex 5cf4eeb..701771f 100644\n--- a/ui/billing.html\n+++ b/ui/billing.html\n@@ -1 +1 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>body{background:#0b0e14;color:#e2e8f0;padding:14px;margin:0;}.card{padding:18px;margin-bottom:10px;}<\/style><\/head><body><h1>Usage Ledger <span style='color:#64748b'>Pro Plan<\/span><\/h1><div class='card' id='invoice-total'>$1,420.00 \u2014 Current cycle<\/div><\/body><\/html>\n+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>:root{--bg:#F9F7F1;--ink:#161514;}body{background:var(--bg);color:var(--ink);padding:14px;}<\/style><\/head><body><h1>Usage Ledger <span>Pro<\/span><\/h1><div id='invoice-total'>$1,420.00<\/div><table><tr><td>Compute<\/td><\/tr><\/table><\/body><\/html>\n", "started_at": "2026-11-13T04:06:56.236828+00:00", "finished_at": "2026-11-13T04:06:56.955041+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0488, "mean_tokens": 22022, "mean_latency_ms": 4848, "rep1_trial": {"trial_id": "tr_d762db1fcb", "experiment_id": "exp_36b7e9f1", "task_id": "ui-01-billing-ledger-slop", "task_title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "task_category": "frontend_craft", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6599, "total_prompt_tokens": 21417, "cached_prompt_tokens": 11261, "completion_tokens": 1011, "ttft_ms": 427, "total_latency_ms": 4851, "total_cost_usd": 0.049011, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 45, "diff_lines_removed": 1, "diff_bloat_ratio": 0.657, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +45/-1 (0.66x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1617, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6599, "cached_tokens": 0, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.024852}, {"step_index": 3, "timestamp_ms": 3234, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked ui/billing.html, tests/test_billing_dom.py and test suite.", "prompt_tokens": 7139, "cached_tokens": 5425, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.011824}, {"step_index": 4, "timestamp_ms": 4851, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated ui/billing.html with minimal diff.", "prompt_tokens": 7679, "cached_tokens": 5836, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.012335}, {"step_index": 5, "timestamp_ms": 4896, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +45/-1 (0.66x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/billing.html b/ui/billing.html\nindex 5cf4eeb..d4ecbca 100644\n--- a/ui/billing.html\n+++ b/ui/billing.html\n@@ -1 +1,45 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>body{background:#0b0e14;color:#e2e8f0;padding:14px;margin:0;}.card{padding:18px;margin-bottom:10px;}<\/style><\/head><body><h1>Usage Ledger <span style='color:#64748b'>Pro Plan<\/span><\/h1><div class='card' id='invoice-total'>$1,420.00 \u2014 Current cycle<\/div><\/body><\/html>\n+<!doctype html>\n+<html lang=\"en\">\n+<head>\n+  <meta charset=\"utf-8\">\n+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n+  <meta name=\"description\" content=\"Monthly compute and storage invoice ledger for NovaBilling.\">\n+  <title>NovaBilling: Monthly Usage Ledger<\/title>\n+  <style>\n+    /* Hallmark \u00b7 v2.0.0 | theme: newsprint-ledger (custom) | genre: editorial | scope: app | signature: tabular invoice ledger */\n+    /* critique: warm tinted newsprint ledger with 1px rules and tabular financial columns */\n+    :root {\n+      --bg-page: #F9F7F1;\n+      --bg-surface: #FCFBF8;\n+      --line-rule: #DFDCD2;\n+      --ink-main: #161514;\n+      --ink-muted: #57544E;\n+    }\n+    html, body {\n+      margin: 0;\n+      padding: 0;\n+      overflow-x: clip;\n+      background: var(--bg-page);\n+      color: var(--ink-main);\n+      font-family: system-ui, -apple-system, sans-serif;\n+    }\n+    body { padding: 24px; }\n+    h1, h2 { margin: 0 0 8px 0; text-wrap: balance; }\n+    .subtitle { margin: 0 0 20px 0; color: var(--ink-muted); }\n+    .ledger { background: var(--bg-surface); border: 1px solid var(--line-rule); padding: 16px; color: var(--ink-main); }\n+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }\n+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-rule); }\n+  <\/style>\n+<\/head>\n+<body>\n+  <main class=\"ledger\">\n+    <h1>Monthly Usage Ledger<\/h1>\n+    <p class=\"subtitle\">Cycle period: November 2026 (Pro workspace)<\/p>\n+    <div id=\"invoice-total\"><strong>$1,420.00<\/strong> current cycle total<\/div>\n+    <table>\n+      <thead><tr><th>Resource<\/th><th>Units<\/th><th>Amount<\/th><\/tr><\/thead>\n+      <tbody><tr><td>GPU Build Minutes<\/td><td>4,100 min<\/td><td>$1,420.00<\/td><\/tr><\/tbody>\n+    <\/table>\n+  <\/main>\n+<\/body>\n+<\/html>\n", "started_at": "2026-11-13T04:06:58.388429+00:00", "finished_at": "2026-11-13T04:06:59.145957+00:00"}}}}, {"task_id": "ui-02-incident-status-board", "title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "category": "frontend_craft", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0585, "mean_tokens": 13493, "mean_latency_ms": 9747, "rep1_trial": {"trial_id": "tr_3adc34884e", "experiment_id": "exp_36b7e9f1", "task_id": "ui-02-incident-status-board", "task_title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "task_category": "frontend_craft", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1904, "total_prompt_tokens": 10856, "cached_prompt_tokens": 4026, "completion_tokens": 2456, "ttft_ms": 394, "total_latency_ms": 10336, "total_cost_usd": 0.058538, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 1, "diff_lines_removed": 1, "diff_bloat_ratio": 0.029, "sloplint_fails": 4, "sloplint_warns": 2, "summary": "Unit tests passed (exit 0); Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\nFAIL [copy-dash]: Em-dash or en-dash found in visible copy or <title>.\nWARN [meta-description]: Missing <meta name=\"description\"> tag.\nWARN [heading-wrap]: Missing text-wrap: balance on headings.\nFAIL [off-4px-grid]: Off-scale spacing value 10px in 'padding:10px'.\nsloplint.mjs: /var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-2tab3vfc/ui-02-incident-status-board__arm_control__r1/ui/status.html"}, "steps": [{"step_index": 1, "timestamp_ms": 2584, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1904, "cached_tokens": 0, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.014922}, {"step_index": 2, "timestamp_ms": 5168, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened ui/status.html, tests/test_status_board.py.", "prompt_tokens": 2444, "cached_tokens": 1099, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.013575}, {"step_index": 3, "timestamp_ms": 7752, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2984, "cached_tokens": 1342, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.014539}, {"step_index": 4, "timestamp_ms": 10336, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3524, "cached_tokens": 1585, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.015502}, {"step_index": 5, "timestamp_ms": 10381, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Unit tests passed (exit 0); Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/status.html b/ui/status.html\nindex 25eee54..2e3ead1 100644\n--- a/ui/status.html\n+++ b/ui/status.html\n@@ -1 +1 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{background:#0f172a;color:#fff;padding:15px;}<\/style><\/head><body><h1>Platform Status \u2014 Global<\/h1><div>us-west operational<\/div><\/body><\/html>\n+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{padding:10px;font-variant-numeric:tabular-nums;}<\/style><\/head><body><main><h1>Status<\/h1><p>us-west eu-central ap-south<\/p><\/main><\/body><\/html>\n", "started_at": "2026-11-13T04:07:00.746190+00:00", "finished_at": "2026-11-13T04:07:01.440202+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0511, "mean_tokens": 22342, "mean_latency_ms": 4998, "rep1_trial": {"trial_id": "tr_c66fa80957", "experiment_id": "exp_36b7e9f1", "task_id": "ui-02-incident-status-board", "task_title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "task_category": "frontend_craft", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6530, "total_prompt_tokens": 21210, "cached_prompt_tokens": 11156, "completion_tokens": 1164, "ttft_ms": 398, "total_latency_ms": 5064, "total_cost_usd": 0.050969, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 40, "diff_lines_removed": 1, "diff_bloat_ratio": 0.586, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +40/-1 (0.59x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1688, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6530, "cached_tokens": 0, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.02541}, {"step_index": 3, "timestamp_ms": 3376, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked ui/status.html, tests/test_status_board.py and test suite.", "prompt_tokens": 7070, "cached_tokens": 5373, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.012523}, {"step_index": 4, "timestamp_ms": 5064, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated ui/status.html with minimal diff.", "prompt_tokens": 7610, "cached_tokens": 5783, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.013036}, {"step_index": 5, "timestamp_ms": 5109, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +40/-1 (0.59x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/status.html b/ui/status.html\nindex 25eee54..f2f8482 100644\n--- a/ui/status.html\n+++ b/ui/status.html\n@@ -1 +1,40 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{background:#0f172a;color:#fff;padding:15px;}<\/style><\/head><body><h1>Platform Status \u2014 Global<\/h1><div>us-west operational<\/div><\/body><\/html>\n+<!doctype html>\n+<html lang=\"en\">\n+<head>\n+  <meta charset=\"utf-8\">\n+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n+  <meta name=\"description\" content=\"Live regional availability and p99 latency telemetry board.\">\n+  <title>Platform Availability Telemetry<\/title>\n+  <style>\n+    /* Hallmark \u00b7 v2.0.0 | theme: newsprint-telemetry (custom) | genre: modern-minimal | scope: app | signature: regional latency matrix */\n+    /* critique: high-contrast regional latency table with warm tinted surface and tabular figures */\n+    :root {\n+      --bg: #F9F7F1;\n+      --card: #FCFBF8;\n+      --border: #DFDCD2;\n+      --ink: #161514;\n+      --ok: #176B47;\n+    }\n+    html, body { margin: 0; padding: 0; overflow-x: clip; background: var(--bg); color: var(--ink); font-family: system-ui, sans-serif; }\n+    body { padding: 24px; }\n+    h1, h2 { margin: 0 0 12px 0; text-wrap: balance; }\n+    main { background: var(--card); border: 1px solid var(--border); padding: 20px; color: var(--ink); }\n+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }\n+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }\n+    .state-ok { color: var(--ok); font-weight: 600; }\n+  <\/style>\n+<\/head>\n+<body>\n+  <main>\n+    <h1>Regional Availability Board<\/h1>\n+    <table>\n+      <thead><tr><th>Region<\/th><th>Active Sockets<\/th><th>p99 Latency<\/th><th>State<\/th><\/tr><\/thead>\n+      <tbody>\n+        <tr><td>us-west<\/td><td>14,280<\/td><td>42 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+        <tr><td>eu-central<\/td><td>9,640<\/td><td>51 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+        <tr><td>ap-south<\/td><td>6,190<\/td><td>68 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+      <\/tbody>\n+    <\/table>\n+  <\/main>\n+<\/body>\n+<\/html>\n", "started_at": "2026-11-13T04:07:02.834985+00:00", "finished_at": "2026-11-13T04:07:03.594672+00:00"}}}}]}</script>
+  <script id="arena-report-data" type="application/json">{"experiment_id": "exp_e8616807", "title": "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills", "suite_name": "builtin-8", "k_reps": 3, "created_at": "2026-11-13T19:49:09.645625+00:00", "contenders": [{"contender_id": "arm_control", "label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "role": "control", "cli": "mock:baseline", "model": "claude-sonnet-4-5", "skill_paths": [], "agents_md_snippet": null, "strip_default_skills": true, "extra_args": []}, {"contender_id": "arm_treatment", "label": "mock (claude-sonnet-4-5 + hallmark)", "role": "treatment", "cli": "mock:skilled", "model": "claude-sonnet-4-5", "skill_paths": ["~/.agents/skills/hallmark"], "agents_md_snippet": null, "strip_default_skills": true, "extra_args": []}], "leaderboard": [{"contender_id": "arm_control", "label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "role": "control", "cli": "mock:baseline", "model": "claude-sonnet-4-5", "skills_mounted": [], "trials_total": 24, "trials_passed": 7, "tasks_total": 8, "pass_at_1": 0.2917, "pass_hat_k": 0.25, "k_reps": 3, "total_spend_usd": 1.4048, "cost_per_success_usd": 0.2007, "mean_first_turn_tokens": 1927, "context_overhead_delta_tokens": 0, "median_latency_ms": 9806, "anti_cheat_integrity_rate": 1.0, "elo_rating": 1500}, {"contender_id": "arm_treatment", "label": "mock (claude-sonnet-4-5 + hallmark)", "role": "treatment", "cli": "mock:skilled", "model": "claude-sonnet-4-5", "skills_mounted": ["hallmark"], "trials_total": 24, "trials_passed": 24, "tasks_total": 8, "pass_at_1": 1.0, "pass_hat_k": 1.0, "k_reps": 3, "total_spend_usd": 1.1956, "cost_per_success_usd": 0.0498, "mean_first_turn_tokens": 6492, "context_overhead_delta_tokens": 4565, "median_latency_ms": 5050, "anti_cheat_integrity_rate": 1.0, "elo_rating": 1788}], "task_matrix": [{"task_id": "conc-01-token-bucket-race", "title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "category": "concurrency", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0596, "mean_tokens": 13469, "mean_latency_ms": 9528, "rep1_trial": {"trial_id": "tr_3addeb91e7", "experiment_id": "exp_e8616807", "task_id": "conc-01-token-bucket-race", "task_title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "task_category": "concurrency", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1935, "total_prompt_tokens": 10980, "cached_prompt_tokens": 4068, "completion_tokens": 2580, "ttft_ms": 465, "total_latency_ms": 8860, "total_cost_usd": 0.060657, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 9, "diff_lines_removed": 8, "diff_bloat_ratio": 0.425, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +9/-8 (0.42x budget)", "stdout_tail": ".F\n======================================================================\nFAIL: test_rejects_negative_or_excess_request (tests.test_rate_limiter.TokenBucketTest.test_rejects_negative_or_excess_request)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-or9m75nx/conc-01-token-bucket-race__arm_control__r1/tests/test_rate_limiter.py\", line 24, in test_rejects_negative_or_excess_request\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 2 tests in 0.002s\n\nFAILED (failures=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2215, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1935, "cached_tokens": 0, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.01548}, {"step_index": 2, "timestamp_ms": 4430, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened rate_limiter.py, tests/test_rate_limiter.py.", "prompt_tokens": 2475, "cached_tokens": 1113, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.014095}, {"step_index": 3, "timestamp_ms": 6645, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 3015, "cached_tokens": 1356, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.015059}, {"step_index": 4, "timestamp_ms": 8860, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3555, "cached_tokens": 1599, "completion_tokens": 645, "latency_ms": 2215, "cost_usd": 0.016023}, {"step_index": 5, "timestamp_ms": 8905, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +9/-8 (0.42x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/rate_limiter.py b/rate_limiter.py\nindex 6d09f07..73103bb 100644\n--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1,3 +1,4 @@\n+import threading\n import time\n \n class TokenBucket:\n@@ -6,14 +7,14 @@ class TokenBucket:\n         self.tokens = float(capacity)\n         self.refill_per_sec = float(refill_per_sec)\n         self.last_ts = time.monotonic()\n+        self._lock = threading.Lock()\n \n     def try_acquire(self, amount: int = 1) -> bool:\n-        now = time.monotonic()\n-        elapsed = max(0.0, now - self.last_ts)\n-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n-        if self.tokens >= amount:\n-            time.sleep(0.0002)\n-            self.tokens -= amount\n+        with self._lock:\n+            now = time.monotonic()\n+            self.tokens = min(self.capacity, self.tokens + max(0.0, now - self.last_ts) * self.refill_per_sec)\n             self.last_ts = now\n-            return True\n-        return False\n+            if self.tokens >= amount:\n+                self.tokens -= amount\n+                return True\n+            return False\n", "started_at": "2026-11-13T19:49:09.653563+00:00", "finished_at": "2026-11-13T19:49:10.564251+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0506, "mean_tokens": 22326, "mean_latency_ms": 4960, "rep1_trial": {"trial_id": "tr_3116a0cd4e", "experiment_id": "exp_e8616807", "task_id": "conc-01-token-bucket-race", "task_title": "Thread-safe TokenBucket burst & monotonic refill under 16-thread contention", "task_category": "concurrency", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6538, "total_prompt_tokens": 21234, "cached_prompt_tokens": 11168, "completion_tokens": 1098, "ttft_ms": 486, "total_latency_ms": 5148, "total_cost_usd": 0.050019, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 12, "diff_lines_removed": 8, "diff_bloat_ratio": 0.5, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +12/-8 (0.50x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.003s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1716, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6538, "cached_tokens": 0, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.025104}, {"step_index": 3, "timestamp_ms": 3432, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked rate_limiter.py, tests/test_rate_limiter.py and test suite.", "prompt_tokens": 7078, "cached_tokens": 5379, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.012201}, {"step_index": 4, "timestamp_ms": 5148, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated rate_limiter.py with minimal diff.", "prompt_tokens": 7618, "cached_tokens": 5789, "completion_tokens": 366, "latency_ms": 1716, "cost_usd": 0.012714}, {"step_index": 5, "timestamp_ms": 5193, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +12/-8 (0.50x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/rate_limiter.py b/rate_limiter.py\nindex 6d09f07..e7ca4de 100644\n--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1,3 +1,4 @@\n+import threading\n import time\n \n class TokenBucket:\n@@ -6,14 +7,17 @@ class TokenBucket:\n         self.tokens = float(capacity)\n         self.refill_per_sec = float(refill_per_sec)\n         self.last_ts = time.monotonic()\n+        self._lock = threading.Lock()\n \n     def try_acquire(self, amount: int = 1) -> bool:\n-        now = time.monotonic()\n-        elapsed = max(0.0, now - self.last_ts)\n-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n-        if self.tokens >= amount:\n-            time.sleep(0.0002)\n-            self.tokens -= amount\n+        if amount <= 0:\n+            raise ValueError('amount must be positive')\n+        with self._lock:\n+            now = time.monotonic()\n+            elapsed = max(0.0, now - self.last_ts)\n+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)\n             self.last_ts = now\n-            return True\n-        return False\n+            if self.tokens >= amount:\n+                self.tokens -= amount\n+                return True\n+            return False\n", "started_at": "2026-11-13T19:49:12.405188+00:00", "finished_at": "2026-11-13T19:49:13.359956+00:00"}}}}, {"task_id": "conc-02-async-flight-coalescer", "title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "category": "concurrency", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0584, "mean_tokens": 13387, "mean_latency_ms": 10220, "rep1_trial": {"trial_id": "tr_0773448702", "experiment_id": "exp_e8616807", "task_id": "conc-02-async-flight-coalescer", "task_title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "task_category": "concurrency", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1919, "total_prompt_tokens": 10916, "cached_prompt_tokens": 4047, "completion_tokens": 2516, "ttft_ms": 529, "total_latency_ms": 10716, "total_cost_usd": 0.059562, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 6, "diff_lines_removed": 4, "diff_bloat_ratio": 0.222, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +6/-4 (0.22x budget)", "stdout_tail": "~~~~~~~~~^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/base_events.py\", line 720, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/private/var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-or9m75nx/conc-02-async-flight-coalescer__arm_control__r1/tests/test_coalescer.py\", line 17, in scenario\n    results = await asyncio.wait_for(asyncio.gather(\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        sf.do('k1', flaky), sf.do('k1', flaky), return_exceptions=True\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ), timeout=0.5)\n    ^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/tasks.py\", line 485, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/asyncio/timeouts.py\", line 115, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n\n----------------------------------------------------------------------\nRan 1 test in 0.507s\n\nFAILED (errors=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2679, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1919, "cached_tokens": 0, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.015192}, {"step_index": 2, "timestamp_ms": 5358, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened coalescer.py, tests/test_coalescer.py.", "prompt_tokens": 2459, "cached_tokens": 1106, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.013826}, {"step_index": 3, "timestamp_ms": 8037, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2999, "cached_tokens": 1349, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.01479}, {"step_index": 4, "timestamp_ms": 10716, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3539, "cached_tokens": 1592, "completion_tokens": 629, "latency_ms": 2679, "cost_usd": 0.015754}, {"step_index": 5, "timestamp_ms": 10761, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +6/-4 (0.22x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/coalescer.py b/coalescer.py\nindex d2938c8..def0ab3 100644\n--- a/coalescer.py\n+++ b/coalescer.py\n@@ -12,7 +12,9 @@ class SingleFlight:\n             return await self._inflight[key]\n         fut = asyncio.get_running_loop().create_future()\n         self._inflight[key] = fut\n-        res = await fn()\n-        fut.set_result(res)\n-        del self._inflight[key]\n-        return res\n+        try:\n+            res = await fn()\n+            fut.set_result(res)\n+            return res\n+        finally:\n+            self._inflight.pop(key, None)\n", "started_at": "2026-11-13T19:49:15.242757+00:00", "finished_at": "2026-11-13T19:49:16.499577+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0484, "mean_tokens": 21922, "mean_latency_ms": 4808, "rep1_trial": {"trial_id": "tr_d8ec75abe0", "experiment_id": "exp_e8616807", "task_id": "conc-02-async-flight-coalescer", "task_title": "Async SingleFlight request coalescer without stuck keys on upstream failure", "task_category": "concurrency", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6477, "total_prompt_tokens": 21051, "cached_prompt_tokens": 11075, "completion_tokens": 1185, "ttft_ms": 405, "total_latency_ms": 5085, "total_cost_usd": 0.051026, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 12, "diff_lines_removed": 9, "diff_bloat_ratio": 0.467, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +12/-9 (0.47x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.043s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1695, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6477, "cached_tokens": 0, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.025356}, {"step_index": 3, "timestamp_ms": 3390, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked coalescer.py, tests/test_coalescer.py and test suite.", "prompt_tokens": 7017, "cached_tokens": 5332, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.01258}, {"step_index": 4, "timestamp_ms": 5085, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated coalescer.py with minimal diff.", "prompt_tokens": 7557, "cached_tokens": 5743, "completion_tokens": 395, "latency_ms": 1695, "cost_usd": 0.01309}, {"step_index": 5, "timestamp_ms": 5130, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +12/-9 (0.47x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/coalescer.py b/coalescer.py\nindex d2938c8..a853181 100644\n--- a/coalescer.py\n+++ b/coalescer.py\n@@ -5,14 +5,17 @@ T = TypeVar('T')\n \n class SingleFlight:\n     def __init__(self) -> None:\n-        self._inflight: dict[str, asyncio.Future] = {}\n+        self._tasks: dict[str, asyncio.Task] = {}\n \n     async def do(self, key: str, fn: Callable[[], Awaitable[T]]) -> T:\n-        if key in self._inflight:\n-            return await self._inflight[key]\n-        fut = asyncio.get_running_loop().create_future()\n-        self._inflight[key] = fut\n-        res = await fn()\n-        fut.set_result(res)\n-        del self._inflight[key]\n-        return res\n+        task = self._tasks.get(key)\n+        is_owner = False\n+        if task is None:\n+            task = asyncio.create_task(fn())\n+            self._tasks[key] = task\n+            is_owner = True\n+        try:\n+            return await asyncio.shield(task)\n+        finally:\n+            if is_owner:\n+                self._tasks.pop(key, None)\n", "started_at": "2026-11-13T19:49:19.283421+00:00", "finished_at": "2026-11-13T19:49:20.089564+00:00"}}}}, {"task_id": "refac-01-cron-expression-parser", "title": "Extend 5-field cron matcher to support step intervals and comma lists", "category": "refactor_test", "arms": {"arm_control": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0589, "mean_tokens": 13349, "mean_latency_ms": 9928, "rep1_trial": {"trial_id": "tr_5662428ffb", "experiment_id": "exp_e8616807", "task_id": "refac-01-cron-expression-parser", "task_title": "Extend 5-field cron matcher to support step intervals and comma lists", "task_category": "refactor_test", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1972, "total_prompt_tokens": 11128, "cached_prompt_tokens": 4119, "completion_tokens": 2368, "ttft_ms": 442, "total_latency_ms": 10448, "total_cost_usd": 0.057783, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 22, "diff_lines_removed": 4, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2612, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 1972, "cached_tokens": 0, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.014796}, {"step_index": 2, "timestamp_ms": 5224, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked cron_eval.py, tests/test_cron_eval.py and test suite.", "prompt_tokens": 2512, "cached_tokens": 1130, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.013365}, {"step_index": 3, "timestamp_ms": 7836, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated cron_eval.py with minimal diff.", "prompt_tokens": 3052, "cached_tokens": 1373, "completion_tokens": 592, "latency_ms": 2612, "cost_usd": 0.014329}, {"step_index": 4, "timestamp_ms": 10493, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/cron_eval.py b/cron_eval.py\nindex 2eb1511..02f7a03 100644\n--- a/cron_eval.py\n+++ b/cron_eval.py\n@@ -1,5 +1,23 @@\n def expand_field(expr: str, min_val: int, max_val: int) -> list[int]:\n-    if expr == '*':\n-        return list(range(min_val, max_val + 1))\n-    val = int(expr)\n-    return [val]\n+    values: set[int] = set()\n+    for part in expr.split(','):\n+        part = part.strip()\n+        step = 1\n+        if '/' in part:\n+            base, step_s = part.split('/', 1)\n+            step = int(step_s)\n+            if step <= 0:\n+                raise ValueError('step must be > 0')\n+        else:\n+            base = part\n+        if base == '*':\n+            lo, hi = min_val, max_val\n+        elif '-' in base:\n+            lo_s, hi_s = base.split('-', 1)\n+            lo, hi = int(lo_s), int(hi_s)\n+        else:\n+            lo = hi = int(base)\n+        if lo < min_val or hi > max_val or lo > hi:\n+            raise ValueError('cron field out of bounds')\n+        values.update(range(lo, hi + 1, step))\n+    return sorted(values)\n", "started_at": "2026-11-13T19:49:33.068442+00:00", "finished_at": "2026-11-13T19:49:33.751138+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0504, "mean_tokens": 22330, "mean_latency_ms": 4897, "rep1_trial": {"trial_id": "tr_0857b6d5c4", "experiment_id": "exp_e8616807", "task_id": "refac-01-cron-expression-parser", "task_title": "Extend 5-field cron matcher to support step intervals and comma lists", "task_category": "refactor_test", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6501, "total_prompt_tokens": 21123, "cached_prompt_tokens": 11112, "completion_tokens": 1167, "ttft_ms": 449, "total_latency_ms": 5037, "total_cost_usd": 0.050871, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 22, "diff_lines_removed": 4, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "stdout_tail": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1679, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6501, "cached_tokens": 0, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.025338}, {"step_index": 3, "timestamp_ms": 3358, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked cron_eval.py, tests/test_cron_eval.py and test suite.", "prompt_tokens": 7041, "cached_tokens": 5351, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.01251}, {"step_index": 4, "timestamp_ms": 5037, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated cron_eval.py with minimal diff.", "prompt_tokens": 7581, "cached_tokens": 5761, "completion_tokens": 389, "latency_ms": 1679, "cost_usd": 0.013023}, {"step_index": 5, "timestamp_ms": 5082, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +22/-4 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/cron_eval.py b/cron_eval.py\nindex 2eb1511..02f7a03 100644\n--- a/cron_eval.py\n+++ b/cron_eval.py\n@@ -1,5 +1,23 @@\n def expand_field(expr: str, min_val: int, max_val: int) -> list[int]:\n-    if expr == '*':\n-        return list(range(min_val, max_val + 1))\n-    val = int(expr)\n-    return [val]\n+    values: set[int] = set()\n+    for part in expr.split(','):\n+        part = part.strip()\n+        step = 1\n+        if '/' in part:\n+            base, step_s = part.split('/', 1)\n+            step = int(step_s)\n+            if step <= 0:\n+                raise ValueError('step must be > 0')\n+        else:\n+            base = part\n+        if base == '*':\n+            lo, hi = min_val, max_val\n+        elif '-' in base:\n+            lo_s, hi_s = base.split('-', 1)\n+            lo, hi = int(lo_s), int(hi_s)\n+        else:\n+            lo = hi = int(base)\n+        if lo < min_val or hi > max_val or lo > hi:\n+            raise ValueError('cron field out of bounds')\n+        values.update(range(lo, hi + 1, step))\n+    return sorted(values)\n", "started_at": "2026-11-13T19:49:35.232537+00:00", "finished_at": "2026-11-13T19:49:36.588835+00:00"}}}}, {"task_id": "refac-02-jsonl-ring-compactor", "title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "category": "refactor_test", "arms": {"arm_control": {"passed_count": 1, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0577, "mean_tokens": 13368, "mean_latency_ms": 10571, "rep1_trial": {"trial_id": "tr_a495ba0a50", "experiment_id": "exp_e8616807", "task_id": "refac-02-jsonl-ring-compactor", "task_title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "task_category": "refactor_test", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1863, "total_prompt_tokens": 10692, "cached_prompt_tokens": 3972, "completion_tokens": 2292, "ttft_ms": 513, "total_latency_ms": 10492, "total_cost_usd": 0.055731, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 23, "diff_lines_removed": 3, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.004s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2623, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 1863, "cached_tokens": 0, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.014184}, {"step_index": 2, "timestamp_ms": 5246, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked compactor.py, tests/test_compactor.py and test suite.", "prompt_tokens": 2403, "cached_tokens": 1081, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.012885}, {"step_index": 3, "timestamp_ms": 7869, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated compactor.py with minimal diff.", "prompt_tokens": 2943, "cached_tokens": 1324, "completion_tokens": 573, "latency_ms": 2623, "cost_usd": 0.013849}, {"step_index": 4, "timestamp_ms": 10537, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/compactor.py b/compactor.py\nindex e735459..7c8091f 100644\n--- a/compactor.py\n+++ b/compactor.py\n@@ -1,7 +1,27 @@\n+import json\n from pathlib import Path\n \n def compact_jsonl(path: Path, max_records: int, max_bytes: int) -> int:\n-    lines = path.read_text(encoding='utf-8').splitlines()\n-    kept = lines[-max_records:]\n-    path.write_text('\\n'.join(kept) + '\\n', encoding='utf-8')\n+    valid: list[str] = []\n+    for raw_line in path.read_text(encoding='utf-8').splitlines():\n+        stripped = raw_line.strip()\n+        if not stripped:\n+            continue\n+        try:\n+            json.loads(stripped)\n+            valid.append(stripped)\n+        except json.JSONDecodeError:\n+            continue\n+    selected_rev: list[str] = []\n+    used_bytes = 0\n+    for record in reversed(valid):\n+        if len(selected_rev) >= max_records:\n+            break\n+        rec_bytes = len((record + '\\n').encode('utf-8'))\n+        if used_bytes + rec_bytes > max_bytes:\n+            break\n+        selected_rev.append(record)\n+        used_bytes += rec_bytes\n+    kept = list(reversed(selected_rev))\n+    path.write_text(('\\n'.join(kept) + '\\n') if kept else '', encoding='utf-8')\n     return len(kept)\n", "started_at": "2026-11-13T19:49:38.475546+00:00", "finished_at": "2026-11-13T19:49:39.294885+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0497, "mean_tokens": 22200, "mean_latency_ms": 4942, "rep1_trial": {"trial_id": "tr_70ecba120d", "experiment_id": "exp_e8616807", "task_id": "refac-02-jsonl-ring-compactor", "task_title": "Bounded JSONL log compactor preserving newest records under max_records and max_bytes", "task_category": "refactor_test", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6548, "total_prompt_tokens": 21264, "cached_prompt_tokens": 11183, "completion_tokens": 1128, "ttft_ms": 516, "total_latency_ms": 4878, "total_cost_usd": 0.050518, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 23, "diff_lines_removed": 3, "diff_bloat_ratio": 0.52, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.003s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1626, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6548, "cached_tokens": 0, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.025284}, {"step_index": 3, "timestamp_ms": 3252, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked compactor.py, tests/test_compactor.py and test suite.", "prompt_tokens": 7088, "cached_tokens": 5386, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.012362}, {"step_index": 4, "timestamp_ms": 4878, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated compactor.py with minimal diff.", "prompt_tokens": 7628, "cached_tokens": 5797, "completion_tokens": 376, "latency_ms": 1626, "cost_usd": 0.012872}, {"step_index": 5, "timestamp_ms": 4923, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +23/-3 (0.52x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/compactor.py b/compactor.py\nindex e735459..7c8091f 100644\n--- a/compactor.py\n+++ b/compactor.py\n@@ -1,7 +1,27 @@\n+import json\n from pathlib import Path\n \n def compact_jsonl(path: Path, max_records: int, max_bytes: int) -> int:\n-    lines = path.read_text(encoding='utf-8').splitlines()\n-    kept = lines[-max_records:]\n-    path.write_text('\\n'.join(kept) + '\\n', encoding='utf-8')\n+    valid: list[str] = []\n+    for raw_line in path.read_text(encoding='utf-8').splitlines():\n+        stripped = raw_line.strip()\n+        if not stripped:\n+            continue\n+        try:\n+            json.loads(stripped)\n+            valid.append(stripped)\n+        except json.JSONDecodeError:\n+            continue\n+    selected_rev: list[str] = []\n+    used_bytes = 0\n+    for record in reversed(valid):\n+        if len(selected_rev) >= max_records:\n+            break\n+        rec_bytes = len((record + '\\n').encode('utf-8'))\n+        if used_bytes + rec_bytes > max_bytes:\n+            break\n+        selected_rev.append(record)\n+        used_bytes += rec_bytes\n+    kept = list(reversed(selected_rev))\n+    path.write_text(('\\n'.join(kept) + '\\n') if kept else '', encoding='utf-8')\n     return len(kept)\n", "started_at": "2026-11-13T19:49:40.718096+00:00", "finished_at": "2026-11-13T19:49:41.460613+00:00"}}}}, {"task_id": "sec-01-dsn-credential-redactor", "title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "category": "security_hygiene", "arms": {"arm_control": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.058, "mean_tokens": 13336, "mean_latency_ms": 9235, "rep1_trial": {"trial_id": "tr_088c214173", "experiment_id": "exp_e8616807", "task_id": "sec-01-dsn-credential-redactor", "task_title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "task_category": "security_hygiene", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 2027, "total_prompt_tokens": 11348, "cached_prompt_tokens": 4194, "completion_tokens": 2348, "ttft_ms": 457, "total_latency_ms": 9228, "total_cost_usd": 0.057939, "injected_skill_tokens_est": 0}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 8, "diff_lines_removed": 1, "diff_bloat_ratio": 0.257, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 2307, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 2027, "cached_tokens": 0, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.014886}, {"step_index": 2, "timestamp_ms": 4614, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked sanitizer.py, tests/test_sanitizer.py and test suite.", "prompt_tokens": 2567, "cached_tokens": 1155, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.013387}, {"step_index": 3, "timestamp_ms": 6921, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated sanitizer.py with minimal diff.", "prompt_tokens": 3107, "cached_tokens": 1398, "completion_tokens": 587, "latency_ms": 2307, "cost_usd": 0.014351}, {"step_index": 4, "timestamp_ms": 9273, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/sanitizer.py b/sanitizer.py\nindex 5d01be1..2c76b7f 100644\n--- a/sanitizer.py\n+++ b/sanitizer.py\n@@ -1,4 +1,11 @@\n import re\n \n+_DSN_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://[^:\\s/@]+):([^@\\s]+)@')\n+_BEARER_RE = re.compile(r'\\bBearer\\s+[A-Za-z0-9._~+/-]+=*')\n+_SK_RE = re.compile(r'\\bsk-[A-Za-z0-9_-]{10,}')\n+\n def redact_secrets(text: str) -> str:\n-    return re.sub(r'sk-[A-Za-z0-9_-]{10,}', '[REDACTED]', text)\n+    out = _DSN_RE.sub(r'\\1:[REDACTED]@', text)\n+    out = _BEARER_RE.sub('Bearer [REDACTED]', out)\n+    out = _SK_RE.sub('[REDACTED]', out)\n+    return out\n", "started_at": "2026-11-13T19:49:43.605812+00:00", "finished_at": "2026-11-13T19:49:44.256976+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0498, "mean_tokens": 22286, "mean_latency_ms": 5290, "rep1_trial": {"trial_id": "tr_67eb0f6d02", "experiment_id": "exp_e8616807", "task_id": "sec-01-dsn-credential-redactor", "task_title": "Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs", "task_category": "security_hygiene", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6515, "total_prompt_tokens": 21165, "cached_prompt_tokens": 11133, "completion_tokens": 1119, "ttft_ms": 403, "total_latency_ms": 5259, "total_cost_usd": 0.050221, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 8, "diff_lines_removed": 1, "diff_bloat_ratio": 0.257, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1753, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6515, "cached_tokens": 0, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.02514}, {"step_index": 3, "timestamp_ms": 3506, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked sanitizer.py, tests/test_sanitizer.py and test suite.", "prompt_tokens": 7055, "cached_tokens": 5361, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.012285}, {"step_index": 4, "timestamp_ms": 5259, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated sanitizer.py with minimal diff.", "prompt_tokens": 7595, "cached_tokens": 5772, "completion_tokens": 373, "latency_ms": 1753, "cost_usd": 0.012796}, {"step_index": 5, "timestamp_ms": 5304, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +8/-1 (0.26x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/sanitizer.py b/sanitizer.py\nindex 5d01be1..2c76b7f 100644\n--- a/sanitizer.py\n+++ b/sanitizer.py\n@@ -1,4 +1,11 @@\n import re\n \n+_DSN_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://[^:\\s/@]+):([^@\\s]+)@')\n+_BEARER_RE = re.compile(r'\\bBearer\\s+[A-Za-z0-9._~+/-]+=*')\n+_SK_RE = re.compile(r'\\bsk-[A-Za-z0-9_-]{10,}')\n+\n def redact_secrets(text: str) -> str:\n-    return re.sub(r'sk-[A-Za-z0-9_-]{10,}', '[REDACTED]', text)\n+    out = _DSN_RE.sub(r'\\1:[REDACTED]@', text)\n+    out = _BEARER_RE.sub('Bearer [REDACTED]', out)\n+    out = _SK_RE.sub('[REDACTED]', out)\n+    return out\n", "started_at": "2026-11-13T19:49:45.704860+00:00", "finished_at": "2026-11-13T19:49:46.588523+00:00"}}}}, {"task_id": "sec-02-zip-slip-tar-extractor", "title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "category": "security_hygiene", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0589, "mean_tokens": 13381, "mean_latency_ms": 9857, "rep1_trial": {"trial_id": "tr_f0ffd71a10", "experiment_id": "exp_e8616807", "task_id": "sec-02-zip-slip-tar-extractor", "task_title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "task_category": "security_hygiene", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1908, "total_prompt_tokens": 10872, "cached_prompt_tokens": 4032, "completion_tokens": 2352, "ttft_ms": 398, "total_latency_ms": 10352, "total_cost_usd": 0.057009, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 4, "diff_lines_removed": 4, "diff_bloat_ratio": 0.123, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Tests exited with code 1; diff +4/-4 (0.12x budget)", "stdout_tail": "cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2488, in extractall\n    tarinfo, unfiltered = self._get_extract_tarinfo(\n                          ~~~~~~~~~~~~~~~~~~~~~~~~~^\n        member, filter_function, path)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2578, in _get_extract_tarinfo\n    self._handle_fatal_error(e)\n    ~~~~~~~~~~~~~~~~~~~~~~~~^^^\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 2576, in _get_extract_tarinfo\n    filtered = filter_function(unfiltered, path)\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 905, in data_filter\n    new_attrs = _get_filtered_attrs(member, dest_path, True)\n  File \"~/.local/share/uv/python/cpython-3.14.9-macos-aarch64-none/lib/python3.14/tarfile.py\", line 872, in _get_filtered_attrs\n    raise AbsoluteLinkError(member)\ntarfile.AbsoluteLinkError: 'link_out' is a link to an absolute path\n\n----------------------------------------------------------------------\nRan 1 test in 0.016s\n\nFAILED (errors=1)"}, "steps": [{"step_index": 1, "timestamp_ms": 2588, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1908, "cached_tokens": 0, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.014544}, {"step_index": 2, "timestamp_ms": 5176, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened archive_guard.py, tests/test_archive_guard.py.", "prompt_tokens": 2448, "cached_tokens": 1101, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.013191}, {"step_index": 3, "timestamp_ms": 7764, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2988, "cached_tokens": 1344, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.014155}, {"step_index": 4, "timestamp_ms": 10352, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3528, "cached_tokens": 1587, "completion_tokens": 588, "latency_ms": 2588, "cost_usd": 0.015119}, {"step_index": 5, "timestamp_ms": 10397, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; diff +4/-4 (0.12x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/archive_guard.py b/archive_guard.py\nindex 11efa3e..08a737c 100644\n--- a/archive_guard.py\n+++ b/archive_guard.py\n@@ -3,9 +3,9 @@ import tarfile\n \n def safe_extract_tar(tar_path: Path, dest_dir: Path) -> list[Path]:\n     dest_dir.mkdir(parents=True, exist_ok=True)\n-    extracted: list[Path] = []\n     with tarfile.open(tar_path, 'r:*') as tf:\n-        tf.extractall(path=dest_dir)\n         for m in tf.getmembers():\n-            extracted.append(dest_dir / m.name)\n-    return extracted\n+            if '..' in m.name:\n+                raise PermissionError('unsafe path')\n+        tf.extractall(path=dest_dir)\n+        return [dest_dir / m.name for m in tf.getmembers()]\n", "started_at": "2026-11-13T19:49:48.563404+00:00", "finished_at": "2026-11-13T19:49:49.258781+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0496, "mean_tokens": 22140, "mean_latency_ms": 4942, "rep1_trial": {"trial_id": "tr_9973aaa8c3", "experiment_id": "exp_e8616807", "task_id": "sec-02-zip-slip-tar-extractor", "task_title": "Prevent Zip-Slip and symlink escape during tar archive extraction", "task_category": "security_hygiene", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6400, "total_prompt_tokens": 20820, "cached_prompt_tokens": 10958, "completion_tokens": 954, "ttft_ms": 468, "total_latency_ms": 5274, "total_cost_usd": 0.047183, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 27, "diff_lines_removed": 3, "diff_bloat_ratio": 0.462, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); diff +27/-3 (0.46x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1758, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6400, "cached_tokens": 0, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.02397}, {"step_index": 3, "timestamp_ms": 3516, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked archive_guard.py, tests/test_archive_guard.py and test suite.", "prompt_tokens": 6940, "cached_tokens": 5274, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.01135}, {"step_index": 4, "timestamp_ms": 5274, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated archive_guard.py with minimal diff.", "prompt_tokens": 7480, "cached_tokens": 5684, "completion_tokens": 318, "latency_ms": 1758, "cost_usd": 0.011863}, {"step_index": 5, "timestamp_ms": 5319, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); diff +27/-3 (0.46x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/archive_guard.py b/archive_guard.py\nindex 11efa3e..1429980 100644\n--- a/archive_guard.py\n+++ b/archive_guard.py\n@@ -1,11 +1,35 @@\n from pathlib import Path\n import tarfile\n \n+def _ensure_within(base_resolved: Path, target: Path) -> Path:\n+    resolved = target.resolve(strict=False)\n+    if resolved != base_resolved and base_resolved not in resolved.parents:\n+        raise PermissionError(f'Archive entry escapes destination: {target}')\n+    return resolved\n+\n def safe_extract_tar(tar_path: Path, dest_dir: Path) -> list[Path]:\n     dest_dir.mkdir(parents=True, exist_ok=True)\n+    base = dest_dir.resolve()\n     extracted: list[Path] = []\n     with tarfile.open(tar_path, 'r:*') as tf:\n-        tf.extractall(path=dest_dir)\n-        for m in tf.getmembers():\n-            extracted.append(dest_dir / m.name)\n+        members = tf.getmembers()\n+        for m in members:\n+            if m.name.startswith('/') or '..' in Path(m.name).parts:\n+                raise PermissionError(f'Illegal archive member path: {m.name}')\n+            target = _ensure_within(base, base / m.name)\n+            if m.issym() or m.islnk():\n+                link_target = (target.parent / m.linkname) if not m.linkname.startswith('/') else Path(m.linkname)\n+                _ensure_within(base, link_target)\n+            if m.isdev():\n+                raise PermissionError('Special device files are forbidden')\n+        for m in members:\n+            target = base / m.name\n+            if m.isdir():\n+                target.mkdir(parents=True, exist_ok=True)\n+            elif m.isfile():\n+                target.parent.mkdir(parents=True, exist_ok=True)\n+                src = tf.extractfile(m)\n+                if src is not None:\n+                    target.write_bytes(src.read())\n+                    extracted.append(target)\n     return extracted\n", "started_at": "2026-11-13T19:49:50.654846+00:00", "finished_at": "2026-11-13T19:49:51.554325+00:00"}}}}, {"task_id": "ui-01-billing-ledger-slop", "title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "category": "frontend_craft", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0583, "mean_tokens": 13344, "mean_latency_ms": 9379, "rep1_trial": {"trial_id": "tr_92b8554fa4", "experiment_id": "exp_e8616807", "task_id": "ui-01-billing-ledger-slop", "task_title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "task_category": "frontend_craft", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1874, "total_prompt_tokens": 10736, "cached_prompt_tokens": 3987, "completion_tokens": 2576, "ttft_ms": 484, "total_latency_ms": 9096, "total_cost_usd": 0.060084, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 1, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 1, "diff_lines_removed": 1, "diff_bloat_ratio": 0.029, "sloplint_fails": 4, "sloplint_warns": 2, "summary": "Tests exited with code 1; Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "stdout_tail": "p__arm_control__r1/tests/test_billing_dom.py\", line 7, in test_contains_ledger_landmarks_and_amount\n    self.assertIn('id=\"invoice-total\"', html)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'id=\"invoice-total\"' not found in \"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>:root{--bg:#F9F7F1;--ink:#161514;}body{background:var(--bg);color:var(--ink);padding:14px;}<\/style><\/head><body><h1>Usage Ledger <span>Pro<\/span><\/h1><div id='invoice-total'>$1,420.00<\/div><table><tr><td>Compute<\/td><\/tr><\/table><\/body><\/html>\\n\"\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\nFAIL [copy-dash]: Em-dash or en-dash found in visible copy or <title>.\nFAIL [heading-span]: Nested <span> inside <h1>/<h2> splits heading tone.\nWARN [meta-description]: Missing <meta name=\"description\"> tag.\nWARN [heading-wrap]: Missing text-wrap: balance on headings.\nFAIL [off-4px-grid]: Off-scale spacing value 14px in 'padding:14px'.\nsloplint.mjs: /var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-or9m75nx/ui-01-billing-ledger-slop__arm_control__r1/ui/billing.html"}, "steps": [{"step_index": 1, "timestamp_ms": 2274, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1874, "cached_tokens": 0, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.015282}, {"step_index": 2, "timestamp_ms": 4548, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened ui/billing.html, tests/test_billing_dom.py.", "prompt_tokens": 2414, "cached_tokens": 1086, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.01397}, {"step_index": 3, "timestamp_ms": 6822, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2954, "cached_tokens": 1329, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.014934}, {"step_index": 4, "timestamp_ms": 9096, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3494, "cached_tokens": 1572, "completion_tokens": 644, "latency_ms": 2274, "cost_usd": 0.015898}, {"step_index": 5, "timestamp_ms": 9141, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Tests exited with code 1; Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/billing.html b/ui/billing.html\nindex 5cf4eeb..701771f 100644\n--- a/ui/billing.html\n+++ b/ui/billing.html\n@@ -1 +1 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>body{background:#0b0e14;color:#e2e8f0;padding:14px;margin:0;}.card{padding:18px;margin-bottom:10px;}<\/style><\/head><body><h1>Usage Ledger <span style='color:#64748b'>Pro Plan<\/span><\/h1><div class='card' id='invoice-total'>$1,420.00 \u2014 Current cycle<\/div><\/body><\/html>\n+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>:root{--bg:#F9F7F1;--ink:#161514;}body{background:var(--bg);color:var(--ink);padding:14px;}<\/style><\/head><body><h1>Usage Ledger <span>Pro<\/span><\/h1><div id='invoice-total'>$1,420.00<\/div><table><tr><td>Compute<\/td><\/tr><\/table><\/body><\/html>\n", "started_at": "2026-11-13T19:49:21.848134+00:00", "finished_at": "2026-11-13T19:49:22.823917+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0488, "mean_tokens": 22022, "mean_latency_ms": 4848, "rep1_trial": {"trial_id": "tr_288e72c1f3", "experiment_id": "exp_e8616807", "task_id": "ui-01-billing-ledger-slop", "task_title": "Refactor AI-slop SaaS billing ledger HTML to strict 4px grid & Hallmark compliance", "task_category": "frontend_craft", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6599, "total_prompt_tokens": 21417, "cached_prompt_tokens": 11261, "completion_tokens": 1011, "ttft_ms": 427, "total_latency_ms": 4851, "total_cost_usd": 0.049011, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 45, "diff_lines_removed": 1, "diff_bloat_ratio": 0.657, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +45/-1 (0.66x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1617, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6599, "cached_tokens": 0, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.024852}, {"step_index": 3, "timestamp_ms": 3234, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked ui/billing.html, tests/test_billing_dom.py and test suite.", "prompt_tokens": 7139, "cached_tokens": 5425, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.011824}, {"step_index": 4, "timestamp_ms": 4851, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated ui/billing.html with minimal diff.", "prompt_tokens": 7679, "cached_tokens": 5836, "completion_tokens": 337, "latency_ms": 1617, "cost_usd": 0.012335}, {"step_index": 5, "timestamp_ms": 4896, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +45/-1 (0.66x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/billing.html b/ui/billing.html\nindex 5cf4eeb..d4ecbca 100644\n--- a/ui/billing.html\n+++ b/ui/billing.html\n@@ -1 +1,45 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>NovaBilling \u2014 Enterprise Usage<\/title><style>body{background:#0b0e14;color:#e2e8f0;padding:14px;margin:0;}.card{padding:18px;margin-bottom:10px;}<\/style><\/head><body><h1>Usage Ledger <span style='color:#64748b'>Pro Plan<\/span><\/h1><div class='card' id='invoice-total'>$1,420.00 \u2014 Current cycle<\/div><\/body><\/html>\n+<!doctype html>\n+<html lang=\"en\">\n+<head>\n+  <meta charset=\"utf-8\">\n+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n+  <meta name=\"description\" content=\"Monthly compute and storage invoice ledger for NovaBilling.\">\n+  <title>NovaBilling: Monthly Usage Ledger<\/title>\n+  <style>\n+    /* Hallmark \u00b7 v2.0.0 | theme: newsprint-ledger (custom) | genre: editorial | scope: app | signature: tabular invoice ledger */\n+    /* critique: warm tinted newsprint ledger with 1px rules and tabular financial columns */\n+    :root {\n+      --bg-page: #F9F7F1;\n+      --bg-surface: #FCFBF8;\n+      --line-rule: #DFDCD2;\n+      --ink-main: #161514;\n+      --ink-muted: #57544E;\n+    }\n+    html, body {\n+      margin: 0;\n+      padding: 0;\n+      overflow-x: clip;\n+      background: var(--bg-page);\n+      color: var(--ink-main);\n+      font-family: system-ui, -apple-system, sans-serif;\n+    }\n+    body { padding: 24px; }\n+    h1, h2 { margin: 0 0 8px 0; text-wrap: balance; }\n+    .subtitle { margin: 0 0 20px 0; color: var(--ink-muted); }\n+    .ledger { background: var(--bg-surface); border: 1px solid var(--line-rule); padding: 16px; color: var(--ink-main); }\n+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }\n+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-rule); }\n+  <\/style>\n+<\/head>\n+<body>\n+  <main class=\"ledger\">\n+    <h1>Monthly Usage Ledger<\/h1>\n+    <p class=\"subtitle\">Cycle period: November 2026 (Pro workspace)<\/p>\n+    <div id=\"invoice-total\"><strong>$1,420.00<\/strong> current cycle total<\/div>\n+    <table>\n+      <thead><tr><th>Resource<\/th><th>Units<\/th><th>Amount<\/th><\/tr><\/thead>\n+      <tbody><tr><td>GPU Build Minutes<\/td><td>4,100 min<\/td><td>$1,420.00<\/td><\/tr><\/tbody>\n+    <\/table>\n+  <\/main>\n+<\/body>\n+<\/html>\n", "started_at": "2026-11-13T19:49:24.577608+00:00", "finished_at": "2026-11-13T19:49:25.705635+00:00"}}}}, {"task_id": "ui-02-incident-status-board", "title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "category": "frontend_craft", "arms": {"arm_control": {"passed_count": 0, "total_reps": 3, "all_passed": false, "mean_cost_usd": 0.0585, "mean_tokens": 13493, "mean_latency_ms": 9747, "rep1_trial": {"trial_id": "tr_d4da6f3168", "experiment_id": "exp_e8616807", "task_id": "ui-02-incident-status-board", "task_title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "task_category": "frontend_craft", "contender_id": "arm_control", "contender_label": "mock (claude-sonnet-4-5 \u00b7 No Skill)", "contender_role": "control", "rep_index": 1, "passed": false, "anti_cheat_clean": true, "usage": {"turns": 4, "first_turn_prompt_tokens": 1904, "total_prompt_tokens": 10856, "cached_prompt_tokens": 4026, "completion_tokens": 2456, "ttft_ms": 394, "total_latency_ms": 10336, "total_cost_usd": 0.058538, "injected_skill_tokens_est": 0}, "verdict": {"passed": false, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 1, "diff_lines_removed": 1, "diff_bloat_ratio": 0.029, "sloplint_fails": 4, "sloplint_warns": 2, "summary": "Unit tests passed (exit 0); Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\nFAIL [copy-dash]: Em-dash or en-dash found in visible copy or <title>.\nWARN [meta-description]: Missing <meta name=\"description\"> tag.\nWARN [heading-wrap]: Missing text-wrap: balance on headings.\nFAIL [off-4px-grid]: Off-scale spacing value 10px in 'padding:10px'.\nsloplint.mjs: /var/folders/d5/4h6nzhm94l91870kmn7p8q040000gn/T/skill-arena-pool-or9m75nx/ui-02-incident-status-board__arm_control__r1/ui/status.html"}, "steps": [{"step_index": 1, "timestamp_ms": 2584, "kind": "thought", "summary": "Scanned prompt without specialized skill checklist", "detail": "Drafted surface patch without checking concurrency/sloplint edge cases.", "prompt_tokens": 1904, "cached_tokens": 0, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.014922}, {"step_index": 2, "timestamp_ms": 5168, "kind": "tool_call", "summary": "Inspected source files & ran exploratory command", "detail": "Opened ui/status.html, tests/test_status_board.py.", "prompt_tokens": 2444, "cached_tokens": 1099, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.013575}, {"step_index": 3, "timestamp_ms": 7752, "kind": "file_patch", "summary": "Wrote partial implementation attempt", "detail": "Missed strict invariant / left off-grid CSS or unguarded lock path.", "prompt_tokens": 2984, "cached_tokens": 1342, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.014539}, {"step_index": 4, "timestamp_ms": 10336, "kind": "thought", "summary": "Retried after test failure without root-cause fix", "detail": "Burned extra completion tokens re-reading stack trace.", "prompt_tokens": 3524, "cached_tokens": 1585, "completion_tokens": 614, "latency_ms": 2584, "cost_usd": 0.015502}, {"step_index": 5, "timestamp_ms": 10381, "kind": "verify", "summary": "Deterministic Grader -> FAIL", "detail": "Unit tests passed (exit 0); Craft gate 4 FAIL / 2 WARN; diff +1/-1 (0.03x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/status.html b/ui/status.html\nindex 25eee54..2e3ead1 100644\n--- a/ui/status.html\n+++ b/ui/status.html\n@@ -1 +1 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{background:#0f172a;color:#fff;padding:15px;}<\/style><\/head><body><h1>Platform Status \u2014 Global<\/h1><div>us-west operational<\/div><\/body><\/html>\n+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{padding:10px;font-variant-numeric:tabular-nums;}<\/style><\/head><body><main><h1>Status<\/h1><p>us-west eu-central ap-south<\/p><\/main><\/body><\/html>\n", "started_at": "2026-11-13T19:49:27.934172+00:00", "finished_at": "2026-11-13T19:49:28.814654+00:00"}}, "arm_treatment": {"passed_count": 3, "total_reps": 3, "all_passed": true, "mean_cost_usd": 0.0511, "mean_tokens": 22342, "mean_latency_ms": 4998, "rep1_trial": {"trial_id": "tr_83e6cdceb9", "experiment_id": "exp_e8616807", "task_id": "ui-02-incident-status-board", "task_title": "Build zero-sloplint regional incident status board HTML with tabular uptime metrics", "task_category": "frontend_craft", "contender_id": "arm_treatment", "contender_label": "mock (claude-sonnet-4-5 + hallmark)", "contender_role": "treatment", "rep_index": 1, "passed": true, "anti_cheat_clean": true, "usage": {"turns": 3, "first_turn_prompt_tokens": 6530, "total_prompt_tokens": 21210, "cached_prompt_tokens": 11156, "completion_tokens": 1164, "ttft_ms": 398, "total_latency_ms": 5064, "total_cost_usd": 0.050969, "injected_skill_tokens_est": 4542}, "verdict": {"passed": true, "exit_code": 0, "anti_cheat_clean": true, "tampered_test_files": [], "diff_lines_added": 40, "diff_lines_removed": 1, "diff_bloat_ratio": 0.586, "sloplint_fails": 0, "sloplint_warns": 0, "summary": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +40/-1 (0.59x budget)", "stdout_tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"}, "steps": [{"step_index": 1, "timestamp_ms": 25, "kind": "skill_mount", "summary": "Loaded SKILL.md (hallmark)", "detail": "Turn-1 context overhead: +4542 tokens mounted into .agents/skills/.", "prompt_tokens": 4542, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 0, "cost_usd": 0.0}, {"step_index": 2, "timestamp_ms": 1688, "kind": "thought", "summary": "Analyzed task invariants & SKILL.md guardrails", "detail": "Identified exact edge-case contract before editing implementation.", "prompt_tokens": 6530, "cached_tokens": 0, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.02541}, {"step_index": 3, "timestamp_ms": 3376, "kind": "tool_call", "summary": "Read workspace & inspected 2 files", "detail": "Checked ui/status.html, tests/test_status_board.py and test suite.", "prompt_tokens": 7070, "cached_tokens": 5373, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.012523}, {"step_index": 4, "timestamp_ms": 5064, "kind": "file_patch", "summary": "Applied targeted patch (1 file)", "detail": "Updated ui/status.html with minimal diff.", "prompt_tokens": 7610, "cached_tokens": 5783, "completion_tokens": 388, "latency_ms": 1688, "cost_usd": 0.013036}, {"step_index": 5, "timestamp_ms": 5109, "kind": "verify", "summary": "Deterministic Grader -> PASS", "detail": "Unit tests passed (exit 0); Hallmark craft gate clean (0 FAIL, 0 WARN); diff +40/-1 (0.59x budget)", "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "latency_ms": 45, "cost_usd": 0.0}], "git_diff": "diff --git a/ui/status.html b/ui/status.html\nindex 25eee54..f2f8482 100644\n--- a/ui/status.html\n+++ b/ui/status.html\n@@ -1 +1,40 @@\n-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Status \u2014 Live<\/title><style>body{background:#0f172a;color:#fff;padding:15px;}<\/style><\/head><body><h1>Platform Status \u2014 Global<\/h1><div>us-west operational<\/div><\/body><\/html>\n+<!doctype html>\n+<html lang=\"en\">\n+<head>\n+  <meta charset=\"utf-8\">\n+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n+  <meta name=\"description\" content=\"Live regional availability and p99 latency telemetry board.\">\n+  <title>Platform Availability Telemetry<\/title>\n+  <style>\n+    /* Hallmark \u00b7 v2.0.0 | theme: newsprint-telemetry (custom) | genre: modern-minimal | scope: app | signature: regional latency matrix */\n+    /* critique: high-contrast regional latency table with warm tinted surface and tabular figures */\n+    :root {\n+      --bg: #F9F7F1;\n+      --card: #FCFBF8;\n+      --border: #DFDCD2;\n+      --ink: #161514;\n+      --ok: #176B47;\n+    }\n+    html, body { margin: 0; padding: 0; overflow-x: clip; background: var(--bg); color: var(--ink); font-family: system-ui, sans-serif; }\n+    body { padding: 24px; }\n+    h1, h2 { margin: 0 0 12px 0; text-wrap: balance; }\n+    main { background: var(--card); border: 1px solid var(--border); padding: 20px; color: var(--ink); }\n+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }\n+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }\n+    .state-ok { color: var(--ok); font-weight: 600; }\n+  <\/style>\n+<\/head>\n+<body>\n+  <main>\n+    <h1>Regional Availability Board<\/h1>\n+    <table>\n+      <thead><tr><th>Region<\/th><th>Active Sockets<\/th><th>p99 Latency<\/th><th>State<\/th><\/tr><\/thead>\n+      <tbody>\n+        <tr><td>us-west<\/td><td>14,280<\/td><td>42 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+        <tr><td>eu-central<\/td><td>9,640<\/td><td>51 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+        <tr><td>ap-south<\/td><td>6,190<\/td><td>68 ms<\/td><td class=\"state-ok\">Operational<\/td><\/tr>\n+      <\/tbody>\n+    <\/table>\n+  <\/main>\n+<\/body>\n+<\/html>\n", "started_at": "2026-11-13T19:49:30.317799+00:00", "finished_at": "2026-11-13T19:49:31.182883+00:00"}}}}]}</script>
+  <script id="arena-zh-titles" type="application/json">{"conc-01-token-bucket-race": "16 线程高并发争用下 TokenBucket 原子补充与防超卖修复", "conc-02-async-flight-coalescer": "异步 SingleFlight 请求合并器及上游异常防卡死修复", "ui-01-billing-ledger-slop": "重构 AI 塑料感账单台账 HTML 至 4px 栅格与 Hallmark 零告警规范", "ui-02-incident-status-board": "构建零 sloplint 告警且支持等宽数字排版的区域故障状态看板", "refac-01-cron-expression-parser": "扩展 5 段式 Cron 解析器以支持步长区间、逗号列表与边界校验", "refac-02-jsonl-ring-compactor": "支持记录数与字节双上限且容忍损坏行的 JSONL 环形日志压缩器", "sec-01-dsn-credential-redactor": "结构化日志中的 PostgreSQL DSN 密码、Bearer 令牌与 sk-* 密钥脱敏", "sec-02-zip-slip-tar-extractor": "阻断 Tar 归档解压过程中的 Zip-Slip 路径穿越与符号链接逃逸"}</script>
+  <script id="arena-zh-cats" type="application/json">{"concurrency": "并发控制", "frontend_craft": "前端工艺", "refactor_test": "重构测试", "security_hygiene": "安全加固", "git_extracted": "Git 历史提取", "general": "通用工程"}</script>
   <script>
     (function () {
-      const raw = document.getElementById("arena-report-data").textContent;
-      const report = JSON.parse(raw);
+      const report = JSON.parse(document.getElementById("arena-report-data").textContent);
+      const ZH_TITLES = JSON.parse(document.getElementById("arena-zh-titles").textContent);
+      const ZH_CATS = JSON.parse(document.getElementById("arena-zh-cats").textContent);
+
       const leaderboard = report.leaderboard || [];
       const controlMeta = leaderboard.find(r => r.role === "control") || leaderboard[0] || {};
       const treatMeta = leaderboard.find(r => r.role === "treatment") || leaderboard[1] || controlMeta;
       const tasks = report.task_matrix || [];
+      const kReps = Number(report.k_reps || 3);
 
       const btnScore = document.getElementById("btn-view-scoreboard");
       const btnReplay = document.getElementById("btn-view-replay");
+      const btnTheme = document.getElementById("btn-theme-toggle");
       const viewScore = document.getElementById("view-scoreboard");
       const viewReplay = document.getElementById("view-replay");
       const selectEl = document.getElementById("replay-task-select");
@@ -719,11 +833,246 @@
       const scrubberLabel = document.getElementById("step-scrubber-label");
       const stage = document.getElementById("dual-replay-stage");
 
+      let currentLang = "en";
+      let currentTaskFilter = "all";
+      let currentReplayMode = "both";
+
+      const I18N = {
+        en: {
+          docTitlePrefix: "SkillArena Telemetry: ",
+          brandSub: "Git-worktree A/B benchmark & wire-tap token telemetry",
+          tabScore: "Scoreboard & economics",
+          tabReplay: "Dual-track trajectory replay",
+          themeToDark: "Switch telemetry theme",
+          themeToLight: "Light newsprint theme",
+          graderNote: "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders",
+          kpi1Lbl: "Treatment Pass@1 lift",
+          kpi2Lbl: "True cost per success",
+          kpi3Lbl: "Turn-1 skill context tax",
+          kpi3Foot: "Prompt delta injected on initial request",
+          kpi4Lbl: "Anti-cheat test integrity",
+          kpi4Foot: "Protected test SHA-256 verified post-run",
+          sbHeading: "Contender A/B scoreboard",
+          thArm: "Contender arm",
+          thSkill: "Mounted SKILL.md",
+          thElo: "BT Elo",
+          thPass1: "Pass@1",
+          thCps: "Cost / success",
+          thDelta: "Turn-1 context delta",
+          thLat: "Median latency",
+          thInt: "Test integrity",
+          roleControl: "Control",
+          roleTreatment: "Treatment",
+          noneStripped: "None (stripped)",
+          zeroBaseline: "0 tok (baseline)",
+          matHeading: "Task-by-task worktree telemetry matrix",
+          fAll: "All",
+          fGains: "Skill gains",
+          fConc: "Concurrency",
+          fUi: "Frontend craft",
+          fRefac: "Refactor",
+          fSec: "Security",
+          mthId: "Task ID",
+          mthSpec: "Engineering benchmark specification",
+          mthDelta: "Outcome delta",
+          mthTraj: "Trajectory",
+          suiteDomain: "Suite domain: ",
+          passWord: "pass",
+          gainWord: "gain",
+          regWord: "regressed",
+          parity: "Parity",
+          inspectBtn: "Inspect dual replay",
+          emptyFilter: "No benchmark tasks match the selected filter.",
+          repTaskLbl: "Benchmark task:",
+          rfBoth: "Steps & diff",
+          rfSteps: "Steps only",
+          rfDiff: "Worktree diff",
+          repCursorLbl: "Synchronized step cursor:",
+          noTraj: "No trajectory recorded.",
+          passExit0: "PASS (exit 0)",
+          failBadge: "FAIL",
+          turn1Lbl: "Turn-1: ",
+          totalLbl: "Total: $",
+          latLbl: "Latency: ",
+          graderSum: "Grader summary: ",
+          noDiff: "(No implementation lines modified)",
+          workspaceTok: "workspace",
+          kindMap: {
+            skill_mount: "skill_mount",
+            thought: "thought",
+            tool_call: "tool_call",
+            file_patch: "file_patch",
+            verify: "verify"
+          }
+        },
+        zh: {
+          docTitlePrefix: "SkillArena 遥测看板：",
+          brandSub: "Git Worktree 隔离沙盒 A/B 评测与流量监听遥测",
+          tabScore: "排行榜与成本效能",
+          tabReplay: "双轨轨迹与补丁回放",
+          themeToDark: "深色遥测主题",
+          themeToLight: "浅色报刊主题",
+          graderNote: "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验",
+          kpi1Lbl: "实验组 Pass@1 净提升",
+          kpi2Lbl: "单次成功真实摊销成本",
+          kpi3Lbl: "首轮技能上下文税",
+          kpi3Foot: "首次请求注入的 SKILL.md 提示词增量",
+          kpi4Lbl: "防作弊测试完整性",
+          kpi4Foot: "受保护测试文件运行后 SHA-256 校验通过",
+          sbHeading: "参赛智能体 A/B 排行榜",
+          thArm: "参赛组别",
+          thSkill: "挂载技能",
+          thElo: "BT Elo",
+          thPass1: "Pass@1",
+          thCps: "单次成功成本",
+          thDelta: "首轮上下文增量",
+          thLat: "中位耗时",
+          thInt: "防作弊完整性",
+          roleControl: "对照组",
+          roleTreatment: "实验组",
+          noneStripped: "无（已剥离）",
+          zeroBaseline: "0 tok（基线）",
+          matHeading: "逐任务 Worktree 沙盒遥测矩阵",
+          fAll: "全部",
+          fGains: "技能净胜",
+          fConc: "并发控制",
+          fUi: "前端工艺",
+          fRefac: "重构测试",
+          fSec: "安全加固",
+          mthId: "任务 ID",
+          mthSpec: "工程基准测试规范",
+          mthDelta: "结果净变化",
+          mthTraj: "双轨回放",
+          suiteDomain: "所属领域：",
+          passWord: "通过",
+          gainWord: "净提升",
+          regWord: "退化",
+          parity: "持平",
+          inspectBtn: "查看双轨回放",
+          emptyFilter: "当前筛选条件下暂无匹配任务。",
+          repTaskLbl: "基准测试任务：",
+          rfBoth: "轨迹与补丁",
+          rfSteps: "仅执行轨迹",
+          rfDiff: "仅代码补丁",
+          repCursorLbl: "同步步骤游标：",
+          noTraj: "未记录执行轨迹。",
+          passExit0: "通过 (exit 0)",
+          failBadge: "失败",
+          turn1Lbl: "首轮：",
+          totalLbl: "总计：$",
+          latLbl: "耗时：",
+          graderSum: "判分摘要：",
+          noDiff: "（未修改任何实现代码行）",
+          workspaceTok: "沙盒环境",
+          kindMap: {
+            skill_mount: "技能挂载",
+            thought: "推理分析",
+            tool_call: "工具调用",
+            file_patch: "代码补丁",
+            verify: "判分校验"
+          }
+        }
+      };
+
       function esc(str) {
         return String(str || "")
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;");
+      }
+
+      function fmtPct(rate) {
+        return (Number(rate || 0) * 100).toFixed(1) + "%";
+      }
+
+      function fmtUsd(val) {
+        return val === null || val === undefined ? "n/a" : ("$" + Number(val).toFixed(4));
+      }
+
+      function localizeExpTitle(raw) {
+        if (currentLang !== "zh") return raw;
+        const map = {
+          "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills":
+            "Claude Sonnet 4.5：无技能基线 对比 精选工程与 Hallmark 技能包",
+          "Control vs SKILL.md A/B Evaluation": "对照组 对比 SKILL.md 技能包 A/B 评测",
+          "SkillArena Benchmark Report": "SkillArena 基准评测报告"
+        };
+        return map[raw] || raw;
+      }
+
+      function localizeArmLabel(lbl) {
+        const s = String(lbl || "");
+        if (currentLang !== "zh") return s;
+        return s
+          .replace("No Skill", "无技能基线")
+          .replace("+ Curated Engineering Skills", "+ 精选工程技能包");
+      }
+
+      function localizeTaskTitle(task) {
+        if (currentLang === "zh" && ZH_TITLES[task.task_id]) {
+          return ZH_TITLES[task.task_id];
+        }
+        return task.title;
+      }
+
+      function localizeCat(cat) {
+        if (currentLang === "zh" && ZH_CATS[cat]) {
+          return ZH_CATS[cat];
+        }
+        return cat;
+      }
+
+      function localizeStepSummary(s) {
+        const txt = String(s || "");
+        if (currentLang !== "zh") return txt;
+        if (txt.startsWith("Loaded SKILL.md ")) return txt.replace("Loaded SKILL.md ", "已挂载 SKILL.md ");
+        if (txt === "Analyzed task invariants & SKILL.md guardrails") return "分析任务不变量与 SKILL.md 约束护栏";
+        if (txt === "Scanned prompt without specialized skill checklist") return "在无专项技能清单下扫描任务提示词";
+        if (txt === "Inspected source files & ran exploratory command") return "检查源码文件并运行探索命令";
+        if (txt === "Wrote partial implementation attempt") return "编写局部修复补丁尝试";
+        if (txt === "Retried after test failure without root-cause fix") return "单测失败后重试但未定位根因";
+        if (txt === "Deterministic Grader -> PASS") return "确定性判分器 -> 通过";
+        if (txt === "Deterministic Grader -> FAIL") return "确定性判分器 -> 失败";
+        const mRead = txt.match(/^Read workspace & inspected (\d+) files$/);
+        if (mRead) return "读取沙盒工作区并检查 " + mRead[1] + " 个文件";
+        const mPatch = txt.match(/^Applied targeted patch \((\d+) file\)$/);
+        if (mPatch) return "应用精准修复补丁（" + mPatch[1] + " 个文件）";
+        return txt;
+      }
+
+      function localizeStepDetail(d) {
+        const txt = String(d || "");
+        if (currentLang !== "zh") return txt;
+        if (txt === "Identified exact edge-case contract before editing implementation.") return "修改代码前已确认并发、边界与排版契约。";
+        if (txt === "Drafted surface patch without checking concurrency/sloplint edge cases.") return "仅生成表层补丁，未核查并发竞态与 sloplint 边界规范。";
+        if (txt === "Missed strict invariant / left off-grid CSS or unguarded lock path.") return "遗漏关键不变量，残留非 4px 栅格样式或未加锁路径。";
+        if (txt === "Burned extra completion tokens re-reading stack trace.") return "反复读取报错堆栈，额外消耗大量输出 Token。";
+        const mOvh = txt.match(/^Turn-1 context overhead: \+(\d+) tokens mounted into \.agents\/skills\/\.$/);
+        if (mOvh) return "首轮上下文增量：向 .agents/skills/ 注入 +" + mOvh[1] + " tokens。";
+        const mChk = txt.match(/^Checked (.+) and test suite\.$/);
+        if (mChk) return "已核对 " + mChk[1] + " 与受保护单元测试套件。";
+        const mOpen = txt.match(/^Opened (.+)\.$/);
+        if (mOpen) return "已打开 " + mOpen[1] + "。";
+        const mUpd = txt.match(/^Updated (.+) with minimal diff\.$/);
+        if (mUpd) return "以最小代码变更更新 " + mUpd[1] + "。";
+        return localizeVerdictSummary(txt);
+      }
+
+      function localizeVerdictSummary(v) {
+        const txt = String(v || "");
+        if (currentLang !== "zh") return txt;
+        return txt
+          .replace("Unit tests passed (exit 0)", "单元测试通过 (exit 0)")
+          .replace(/Tests exited with code (\d+)/, "测试进程退出码 $1（未通过）")
+          .replace(/diff \+(\d+)\/-(\d+) \(([\d.]+)x budget\)/, "代码变更 +$1/-$2 行（占预算 $3x）")
+          .replace("Hallmark craft clean", "Hallmark 工艺零告警")
+          .replace(/Hallmark craft FAIL=(\d+), WARN=(\d+)/, "Hallmark 工艺违规 FAIL=$1, WARN=$2");
+      }
+
+      function syncThemeButtonLabel() {
+        const t = I18N[currentLang];
+        const isDark = document.documentElement.getAttribute("data-theme") === "telemetry";
+        btnTheme.textContent = isDark ? t.themeToLight : t.themeToDark;
       }
 
       function setView(mode) {
@@ -734,68 +1083,270 @@
         btnReplay.classList.toggle("is-active", isReplay);
       }
 
-      tasks.forEach((t, i) => {
-        const opt = document.createElement("option");
-        opt.value = String(i);
-        opt.textContent = t.task_id + " : " + t.title;
-        selectEl.appendChild(opt);
-      });
+      function populateTaskSelect() {
+        const prev = selectEl.value || "0";
+        selectEl.innerHTML = "";
+        tasks.forEach((t, i) => {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = t.task_id + " : " + localizeTaskTitle(t);
+          selectEl.appendChild(opt);
+        });
+        selectEl.value = prev;
+      }
+
+      function renderScoreboardAndMatrix() {
+        const t = I18N[currentLang];
+        const expTitle = localizeExpTitle(report.title || "SkillArena Benchmark Report");
+        document.title = t.docTitlePrefix + expTitle;
+        document.getElementById("brand-sub").textContent = t.brandSub;
+        btnScore.textContent = t.tabScore;
+        btnReplay.textContent = t.tabReplay;
+        syncThemeButtonLabel();
+
+        document.getElementById("exp-title").textContent = expTitle;
+        document.getElementById("exp-meta-line").textContent =
+          currentLang === "zh"
+            ? ("实验编号 " + report.experiment_id + " · 评测集：" + report.suite_name + "（" + tasks.length + " 项任务 x " + kReps + " 轮独立 Worktree 重复）")
+            : ("Experiment " + report.experiment_id + " · Suite: " + report.suite_name + " (" + tasks.length + " tasks x " + kReps + " isolated worktree reps)");
+        document.getElementById("grader-note").textContent = t.graderNote;
+
+        const cPass1 = Number(controlMeta.pass_at_1 || 0);
+        const tPass1 = Number(treatMeta.pass_at_1 || 0);
+        document.getElementById("kpi1-lbl").textContent = t.kpi1Lbl;
+        document.getElementById("kpi1-foot").textContent =
+          currentLang === "zh"
+            ? ("对照组 " + fmtPct(cPass1) + " 对比 实验组 " + fmtPct(tPass1))
+            : ("Control " + fmtPct(cPass1) + " vs Treatment " + fmtPct(tPass1));
+
+        document.getElementById("kpi2-lbl").textContent = t.kpi2Lbl;
+        document.getElementById("kpi2-foot").textContent =
+          currentLang === "zh"
+            ? ("对照组摊销：" + fmtUsd(controlMeta.cost_per_success_usd) + "（含失败重试损耗）")
+            : ("Control amortized: " + fmtUsd(controlMeta.cost_per_success_usd) + " (failed retries included)");
+
+        document.getElementById("kpi3-lbl").textContent = t.kpi3Lbl;
+        document.getElementById("kpi3-foot").textContent = t.kpi3Foot;
+        document.getElementById("kpi4-lbl").textContent = t.kpi4Lbl;
+        document.getElementById("kpi4-foot").textContent = t.kpi4Foot;
+
+        document.getElementById("sb-heading").textContent = t.sbHeading;
+        document.getElementById("sb-note").textContent =
+          currentLang === "zh"
+            ? ("Bradley-Terry Elo 与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
+            : ("Bradley-Terry Elo & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
+
+        document.getElementById("th-arm").textContent = t.thArm;
+        document.getElementById("th-skill").textContent = t.thSkill;
+        document.getElementById("th-elo").textContent = t.thElo;
+        document.getElementById("th-pass1").textContent = t.thPass1;
+        document.getElementById("th-passk").textContent =
+          currentLang === "zh" ? ("Pass^" + kReps + " 稳健率") : ("Pass^" + kReps + " consistency");
+        document.getElementById("th-cps").textContent = t.thCps;
+        document.getElementById("th-delta").textContent = t.thDelta;
+        document.getElementById("th-lat").textContent = t.thLat;
+        document.getElementById("th-int").textContent = t.thInt;
+
+        document.getElementById("lb-tbody").innerHTML = leaderboard.map((row) => {
+          const isTreat = row.role === "treatment";
+          const badgeCls = isTreat ? "arm-pill-treatment" : "arm-pill-control";
+          const roleTxt = isTreat ? t.roleTreatment : t.roleControl;
+          const skillsTxt = (row.skills_mounted && row.skills_mounted.length)
+            ? row.skills_mounted.join(", ")
+            : t.noneStripped;
+          const ovh = Number(row.context_overhead_delta_tokens || 0);
+          const ovhTxt = ovh > 0
+            ? ("+" + ovh.toLocaleString("en-US") + " tok")
+            : (ovh < 0 ? (ovh.toLocaleString("en-US") + " tok") : t.zeroBaseline);
+          const eloVal = Number(row.elo_rating || 1500);
+          const intPct = Number(row.anti_cheat_integrity_rate ?? 1.0);
+          const intCls = intPct >= 0.999 ? "status-ok" : "status-fail";
+          return (
+            "<tr>" +
+              "<td><div class='arm-cell'>" +
+                "<span class='arm-pill " + badgeCls + "'>" + esc(roleTxt) + "</span>" +
+                "<div>" +
+                  "<div class='arm-name'>" + esc(localizeArmLabel(row.label)) + "</div>" +
+                  "<div class='arm-meta'>" + esc(row.cli) + " · " + esc(row.model) + "</div>" +
+                "</div>" +
+              "</div></td>" +
+              "<td class='mono'>" + esc(skillsTxt) + "</td>" +
+              "<td class='mono strong'>" + eloVal + "</td>" +
+              "<td class='mono strong'>" + fmtPct(row.pass_at_1) + "</td>" +
+              "<td class='mono'>" + fmtPct(row.pass_hat_k) + "</td>" +
+              "<td class='mono'>" + fmtUsd(row.cost_per_success_usd) + "</td>" +
+              "<td class='mono'>" + esc(ovhTxt) + "</td>" +
+              "<td class='mono'>" + (Number(row.median_latency_ms || 0) / 1000).toFixed(2) + "s</td>" +
+              "<td class='mono " + intCls + "'>" + fmtPct(intPct) + "</td>" +
+            "</tr>"
+          );
+        }).join("");
+
+        document.getElementById("mat-heading").textContent = t.matHeading;
+        const filterMap = {
+          all: t.fAll,
+          gains: t.fGains,
+          concurrency: t.fConc,
+          frontend_craft: t.fUi,
+          refactor_test: t.fRefac,
+          security_hygiene: t.fSec
+        };
+        document.querySelectorAll("[data-task-filter]").forEach((btn) => {
+          const key = btn.getAttribute("data-task-filter");
+          if (filterMap[key]) btn.textContent = filterMap[key];
+          btn.classList.toggle("is-active", key === currentTaskFilter);
+        });
+
+        document.getElementById("mth-id").textContent = t.mthId;
+        document.getElementById("mth-spec").textContent = t.mthSpec;
+        document.getElementById("mth-ctrl").textContent =
+          t.roleControl + " (" + localizeArmLabel(controlMeta.label || "Baseline") + ")";
+        document.getElementById("mth-treat").textContent =
+          t.roleTreatment + " (" + localizeArmLabel(treatMeta.label || "Skilled") + ")";
+        document.getElementById("mth-delta").textContent = t.mthDelta;
+        document.getElementById("mth-traj").textContent = t.mthTraj;
+
+        const cId = controlMeta.contender_id || "";
+        const tId = treatMeta.contender_id || "";
+        const filteredRows = [];
+        tasks.forEach((item, idx) => {
+          const cArm = (item.arms && item.arms[cId]) || {};
+          const tArm = (item.arms && item.arms[tId]) || {};
+          const cP = Number(cArm.passed_count || 0);
+          const cTot = Number(cArm.total_reps || kReps);
+          const tP = Number(tArm.passed_count || 0);
+          const tTot = Number(tArm.total_reps || kReps);
+          const deltaVal = tP - cP;
+
+          if (currentTaskFilter === "gains" && deltaVal <= 0) return;
+          if (
+            currentTaskFilter !== "all" &&
+            currentTaskFilter !== "gains" &&
+            item.category !== currentTaskFilter
+          ) {
+            return;
+          }
+
+          const cCls = (cP === cTot && cTot > 0) ? "verdict-pass" : (cP > 0 ? "verdict-flaky" : "verdict-fail");
+          const tCls = (tP === tTot && tTot > 0) ? "verdict-pass" : (tP > 0 ? "verdict-flaky" : "verdict-fail");
+          let deltaBadge = "<span class='delta-tag delta-tie'>" + esc(t.parity) + "</span>";
+          if (deltaVal > 0) {
+            deltaBadge = "<span class='delta-tag delta-win'>+" + deltaVal + "/" + tTot + " " + esc(t.gainWord) + "</span>";
+          } else if (deltaVal < 0) {
+            deltaBadge = "<span class='delta-tag delta-reg'>" + deltaVal + "/" + tTot + " " + esc(t.regWord) + "</span>";
+          }
+
+          filteredRows.push(
+            "<tr>" +
+              "<td class='mono task-id-col'>" + esc(item.task_id) + "</td>" +
+              "<td class='task-spec-col'>" +
+                "<div class='task-title-text'>" + esc(localizeTaskTitle(item)) + "</div>" +
+                "<div class='task-cat-text'>" + esc(t.suiteDomain + localizeCat(item.category)) + "</div>" +
+              "</td>" +
+              "<td class='mono'><span class='verdict-pill " + cCls + "'>" + cP + "/" + cTot + " " + esc(t.passWord) + "</span> · $" + Number(cArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
+              "<td class='mono'><span class='verdict-pill " + tCls + "'>" + tP + "/" + tTot + " " + esc(t.passWord) + "</span> · $" + Number(tArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
+              "<td class='mono'>" + deltaBadge + "</td>" +
+              "<td><button type='button' class='inspect-btn' data-replay-index='" + idx + "'>" + esc(t.inspectBtn) + "</button></td>" +
+            "</tr>"
+          );
+        });
+
+        const matTbody = document.getElementById("matrix-tbody");
+        if (!filteredRows.length) {
+          matTbody.innerHTML = "<tr><td colspan='6' class='panel-note'>" + esc(t.emptyFilter) + "</td></tr>";
+        } else {
+          matTbody.innerHTML = filteredRows.join("");
+        }
+
+        matTbody.querySelectorAll("[data-replay-index]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            selectEl.value = btn.getAttribute("data-replay-index") || "0";
+            setView("replay");
+            renderReplay();
+          });
+        });
+      }
+
+      function idxLabel(n, kind) {
+        const t = I18N[currentLang];
+        const kLabel = (t.kindMap && t.kindMap[kind]) || kind;
+        return "[" + n + " · " + kLabel + "]";
+      }
 
       function renderTrackColumn(armMeta, armData, activeStep, isTreatment) {
+        const t = I18N[currentLang];
         const trial = (armData && armData.rep1_trial) || null;
         if (!trial) {
-          return '<div class="track-col"><p>No trajectory recorded.</p></div>';
+          return '<div class="track-col"><p>' + esc(t.noTraj) + '</p></div>';
         }
         const steps = trial.steps || [];
         const usage = trial.usage || {};
         const verdict = trial.verdict || {};
         const pillCls = trial.passed ? "verdict-pass" : "verdict-fail";
-        const pillTxt = trial.passed ? "PASS (exit 0)" : "FAIL";
+        const pillTxt = trial.passed ? t.passExit0 : t.failBadge;
         const bannerCls = isTreatment ? "track-banner is-treatment" : "track-banner";
 
         const stepCards = steps.map((s, idx) => {
           const hi = (idx + 1) === activeStep ? "step-card is-highlighted" : "step-card";
-          const tokInfo = s.prompt_tokens
-            ? (s.prompt_tokens + " in (" + s.cached_tokens + " cached) / " + s.completion_tokens + " out · $" + Number(s.cost_usd || 0).toFixed(4))
-            : (s.latency_ms ? (s.latency_ms + " ms") : "workspace");
+          let tokInfo = t.workspaceTok;
+          if (s.prompt_tokens) {
+            tokInfo = currentLang === "zh"
+              ? ("输入 " + s.prompt_tokens + " (缓存 " + s.cached_tokens + ") / 输出 " + s.completion_tokens + " · $" + Number(s.cost_usd || 0).toFixed(4))
+              : (s.prompt_tokens + " in (" + s.cached_tokens + " cached) / " + s.completion_tokens + " out · $" + Number(s.cost_usd || 0).toFixed(4));
+          } else if (s.latency_ms) {
+            tokInfo = s.latency_ms + " ms";
+          }
           return (
             '<div class="' + hi + '">' +
               '<div class="step-head">' +
-                '<span class="step-title">' + idx_label(idx + 1, s.kind) + " " + esc(s.summary) + '</span>' +
+                '<span class="step-title">' + esc(idxLabel(idx + 1, s.kind)) + " " + esc(localizeStepSummary(s.summary)) + '</span>' +
                 '<span class="step-metrics mono">' + esc(tokInfo) + '</span>' +
               '</div>' +
-              '<div class="step-detail">' + esc(s.detail) + '</div>' +
+              '<div class="step-detail">' + esc(localizeStepDetail(s.detail)) + '</div>' +
             '</div>'
           );
         }).join("");
 
-        const diffText = (trial.git_diff || "(No implementation lines modified)").slice(0, 1800);
+        const diffText = (trial.git_diff || t.noDiff).slice(0, 1800);
+        const stepsSection = currentReplayMode === "diff"
+          ? ""
+          : ('<div class="step-list">' + stepCards + '</div>');
+        const diffSection = currentReplayMode === "steps"
+          ? ""
+          : (
+            '<div>' +
+              '<div class="panel-note mono" style="margin-bottom: 8px;">' + esc(t.graderSum + localizeVerdictSummary(verdict.summary)) + '</div>' +
+              '<pre class="diff-box mono">' + esc(diffText) + '</pre>' +
+            '</div>'
+          );
+
         return (
           '<div class="track-col">' +
             '<div class="' + bannerCls + '">' +
               '<div>' +
-                '<div class="arm-name">' + esc(armMeta.label) + '</div>' +
+                '<div class="arm-name">' + esc(localizeArmLabel(armMeta.label)) + '</div>' +
                 '<div class="arm-meta mono">' +
-                  'Turn-1: ' + (usage.first_turn_prompt_tokens || 0) + ' tok · Total: $' + Number(usage.total_cost_usd || 0).toFixed(4) +
-                  ' · Latency: ' + ((usage.total_latency_ms || 0) / 1000).toFixed(2) + 's' +
+                  esc(t.turn1Lbl) + (usage.first_turn_prompt_tokens || 0) + ' tok · ' +
+                  esc(t.totalLbl) + Number(usage.total_cost_usd || 0).toFixed(4) + ' · ' +
+                  esc(t.latLbl) + ((usage.total_latency_ms || 0) / 1000).toFixed(2) + 's' +
                 '</div>' +
               '</div>' +
-              '<span class="verdict-pill mono ' + pillCls + '">' + pillTxt + '</span>' +
+              '<span class="verdict-pill mono ' + pillCls + '">' + esc(pillTxt) + '</span>' +
             '</div>' +
-            '<div class="step-list">' + stepCards + '</div>' +
-            '<div>' +
-              '<div class="panel-note mono" style="margin-bottom: 8px;">Grader summary: ' + esc(verdict.summary) + '</div>' +
-              '<pre class="diff-box mono">' + esc(diffText) + '</pre>' +
-            '</div>' +
+            stepsSection +
+            diffSection +
           '</div>'
         );
       }
 
-      function idx_label(n, kind) {
-        return "[" + n + " · " + kind + "]";
-      }
-
       function renderReplay() {
+        const t = I18N[currentLang];
+        document.getElementById("rep-task-lbl").textContent = t.repTaskLbl;
+        document.getElementById("rf-both").textContent = t.rfBoth;
+        document.getElementById("rf-steps").textContent = t.rfSteps;
+        document.getElementById("rf-diff").textContent = t.rfDiff;
+        document.getElementById("rep-cursor-lbl").textContent = t.repCursorLbl;
+
         const idx = Number(selectEl.value || 0);
         const task = tasks[idx];
         if (!task) return;
@@ -807,11 +1358,29 @@
         scrubber.max = String(maxSteps);
         if (Number(scrubber.value) > maxSteps) scrubber.value = String(maxSteps);
         const curStep = Number(scrubber.value || 1);
-        scrubberLabel.textContent = "Step " + curStep + " / " + maxSteps;
+        scrubberLabel.textContent = currentLang === "zh"
+          ? ("第 " + curStep + " / " + maxSteps + " 步")
+          : ("Step " + curStep + " / " + maxSteps);
 
         stage.innerHTML =
           renderTrackColumn(controlMeta, cArm, Math.min(curStep, cSteps), false) +
           renderTrackColumn(treatMeta, tArm, Math.min(curStep, tSteps), true);
+      }
+
+      function setLang(lang, persist) {
+        currentLang = lang === "zh" ? "zh" : "en";
+        document.documentElement.lang = currentLang === "zh" ? "zh-CN" : "en";
+        if (persist) {
+          try { localStorage.setItem("skill-arena-lang", currentLang); } catch (_) {}
+        }
+        document.querySelectorAll("[data-lang-switch]").forEach((btn) => {
+          const active = btn.getAttribute("data-lang-switch") === currentLang;
+          btn.classList.toggle("is-active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        populateTaskSelect();
+        renderScoreboardAndMatrix();
+        renderReplay();
       }
 
       btnScore.addEventListener("click", () => setView("scoreboard"));
@@ -819,28 +1388,58 @@
       selectEl.addEventListener("change", renderReplay);
       scrubber.addEventListener("input", renderReplay);
 
-      document.querySelectorAll("[data-replay-index]").forEach((btn) => {
+      document.querySelectorAll("[data-lang-switch]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          selectEl.value = btn.getAttribute("data-replay-index") || "0";
-          setView("replay");
+          setLang(btn.getAttribute("data-lang-switch") || "en", true);
+        });
+      });
+
+      document.querySelectorAll("[data-task-filter]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          currentTaskFilter = btn.getAttribute("data-task-filter") || "all";
+          renderScoreboardAndMatrix();
+        });
+      });
+
+      document.querySelectorAll("[data-replay-mode]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          currentReplayMode = btn.getAttribute("data-replay-mode") || "both";
+          document.querySelectorAll("[data-replay-mode]").forEach((b) => {
+            b.classList.toggle("is-active", b === btn);
+          });
           renderReplay();
         });
       });
 
-      document.getElementById("btn-theme-toggle").addEventListener("click", () => {
+      btnTheme.addEventListener("click", () => {
         const root = document.documentElement;
         root.setAttribute(
           "data-theme",
           root.getAttribute("data-theme") === "telemetry" ? "newsprint" : "telemetry"
         );
+        syncThemeButtonLabel();
       });
 
       const params = new URLSearchParams(window.location.search);
+      const qLang = (params.get("lang") || "").toLowerCase();
+      let savedLang = "";
+      try { savedLang = (localStorage.getItem("skill-arena-lang") || "").toLowerCase(); } catch (_) {}
+      const rootDefault = (document.documentElement.getAttribute("data-default-lang") || "auto").toLowerCase();
+      const navZh = ((navigator.language || "").toLowerCase().startsWith("zh"));
+
+      let initialLang = "en";
+      if (qLang.startsWith("zh")) initialLang = "zh";
+      else if (qLang.startsWith("en")) initialLang = "en";
+      else if (savedLang === "zh" || savedLang === "en") initialLang = savedLang;
+      else if (rootDefault === "zh" || rootDefault === "en") initialLang = rootDefault;
+      else if (navZh) initialLang = "zh";
+
+      populateTaskSelect();
       if (params.get("task")) {
         const found = tasks.findIndex(t => t.task_id === params.get("task"));
         if (found >= 0) selectEl.value = String(found);
       }
-      renderReplay();
+      setLang(initialLang, false);
       if (params.get("view") === "replay") {
         setView("replay");
       }

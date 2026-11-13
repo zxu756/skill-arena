@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import sqlite3
 import statistics
@@ -190,22 +191,30 @@ class ArenaDatabase:
         for tr in trials:
             by_contender[tr.contender_id].append(tr)
 
-        # Compute baseline Turn-1 prompt tokens from control arm
+        # Compute baseline Turn-1 prompt tokens and paired Bradley-Terry reference from control arm
+        control_cid: str | None = None
         control_turn1_tokens: int | None = None
         for c in contenders:
             c_trials = by_contender.get(c.contender_id, [])
             if c.role == "control" and c_trials:
+                control_cid = c.contender_id
                 control_turn1_tokens = int(
                     round(statistics.mean(t.usage.first_turn_prompt_tokens for t in c_trials))
                 )
                 break
         if control_turn1_tokens is None and contenders:
+            control_cid = contenders[0].contender_id
             first_trials = by_contender.get(contenders[0].contender_id, [])
             control_turn1_tokens = (
                 int(round(statistics.mean(t.usage.first_turn_prompt_tokens for t in first_trials)))
                 if first_trials
                 else 0
             )
+
+        ctrl_outcome_map: dict[tuple[str, int], bool] = {
+            (t.task_id, t.rep_index): t.passed
+            for t in by_contender.get(control_cid or "", [])
+        }
 
         leaderboard: list[LeaderboardSummary] = []
         for c in contenders:
@@ -244,6 +253,26 @@ class ArenaDatabase:
                 sum(1 for t in c_trials if t.anti_cheat_clean) / max(1, trials_total)
             )
 
+            if c.contender_id == control_cid or not ctrl_outcome_map or not c_trials:
+                elo_rating = 1500
+            else:
+                wins = 0.0
+                pairs = 0
+                for t in c_trials:
+                    key = (t.task_id, t.rep_index)
+                    if key in ctrl_outcome_map:
+                        pairs += 1
+                        c_ok = ctrl_outcome_map[key]
+                        if t.passed and not c_ok:
+                            wins += 1.0
+                        elif t.passed == c_ok:
+                            wins += 0.5
+                if pairs > 0:
+                    score = (wins + 0.5) / (pairs + 1.0)
+                    elo_rating = int(round(1500.0 + 400.0 * math.log10(score / max(1e-6, 1.0 - score))))
+                else:
+                    elo_rating = 1500
+
             skill_names = [Path(p).stem if Path(p).stem.upper() != "SKILL" else Path(p).parent.name for p in c.skill_paths]
             leaderboard.append(
                 LeaderboardSummary(
@@ -265,6 +294,7 @@ class ArenaDatabase:
                     context_overhead_delta_tokens=overhead_delta,
                     median_latency_ms=median_lat,
                     anti_cheat_integrity_rate=round(integrity_rate, 4),
+                    elo_rating=elo_rating,
                 )
             )
 
