@@ -571,3 +571,31 @@ def test_equal_pass_rate_20_trials_each_cli_and_html_report_inconclusive_zh_and_
     assert audit_html_craft(html_zh_path).passed
     assert audit_html_craft(html_en_path).passed
 
+
+def test_readmes_disclose_env_scrub_detached_daemon_limitation_bilingually() -> None:
+    """K16: Both README.md and README.zh-CN.md must disclose detached env-scrubbing daemons alongside SIP."""
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    # English README must state both SIP binaries and environment-scrubbing detached processes (execve / env)
+    assert "SIP" in readme_en and "/bin/sleep" in readme_en
+    assert "execve" in readme_en and "SKILL_ARENA_TRIAL_TOKEN" in readme_en
+    assert "chdir" in readme_en and "does not guarantee" in readme_en
+
+    # Chinese README must carry matching bilingual disclosure
+    assert "SIP" in readme_zh and "/bin/sleep" in readme_zh
+    assert "execve" in readme_zh and "SKILL_ARENA_TRIAL_TOKEN" in readme_zh
+    assert "chdir" in readme_zh and "不保证" in readme_zh
+
+
+def test_acceptance_scripts_report_skipped_separately_from_passed() -> None:
+    """Skipped checks must be tallied separately in summary lines, never folded into 'ALL ... VERIFIED'."""
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_replay_sh = (repo_root / "Scripts" / "acceptance" / "readme-commands.sh").read_text(encoding="utf-8")
+    test_sh = (repo_root / "Scripts" / "test.sh").read_text(encoding="utf-8")
+
+    assert "ALL PARSED README COMMANDS VERIFIED" not in readme_replay_sh
+    assert "skipped_count" in readme_replay_sh and "passed_count" in readme_replay_sh
+    assert "skipped" in test_sh
+

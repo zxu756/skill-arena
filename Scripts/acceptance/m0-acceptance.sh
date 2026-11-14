@@ -310,12 +310,14 @@ finally:
 print("  PASS Row 5: Double-fork + setsid + close-fd + chdir('/') non-SIP daemons killed, recorded in leaked_processes, and trials marked FAILED (<10s).")
 PY
 
-  # Also verify README explicitly documents the macOS SIP /bin/sleep double-fork non-guarantee
+  # Also verify README explicitly documents both macOS SIP /bin/sleep and env-scrubbing (execve) double-fork non-guarantees
   grep -q "/bin/sleep" "${ROOT_DIR}/README.md"
+  grep -q "execve" "${ROOT_DIR}/README.md"
   grep -q "does not guarantee" "${ROOT_DIR}/README.md"
   grep -q "/bin/sleep" "${ROOT_DIR}/README.zh-CN.md"
+  grep -q "execve" "${ROOT_DIR}/README.zh-CN.md"
   grep -q "不保证" "${ROOT_DIR}/README.zh-CN.md"
-  echo "  Verified README.md & README.zh-CN.md explicitly document macOS SIP /bin/sleep double-fork non-guarantee."
+  echo "  Verified README.md & README.zh-CN.md explicitly document macOS SIP /bin/sleep and env-scrubbing (execve) double-fork non-guarantees."
 
   # ------------------------------------------------------------------
   # Row 6: extract-commit strips commit message & excludes fix commit from task .git history
@@ -643,11 +645,22 @@ assert needle in src, "Mutation 8e target not found"
 target_file.write_text(src.replace(needle, "pass", 1), encoding="utf-8")
 '
 
-  echo "  PASS Row 8: All 5 mutations failed their exact named tests (exit 1) and restored cleanly."
+  verify_named_mutation \
+    "Mutation 8f (disable sandbox open-file +D scan)" \
+    "src/skill_arena/sandbox/worktree_pool.py" \
+    "tests/test_sandbox.py" \
+    "test_detached_env_scrubbed_daemon_using_sandbox_dir_is_killed_and_fails_trial" \
+    '
+needle = "if os.path.isdir(real_target):"
+assert needle in src, "Mutation 8f target not found"
+target_file.write_text(src.replace(needle, "if False:", 1), encoding="utf-8")
+'
+
+  echo "  PASS Row 8: All 6 mutations failed their exact named tests (exit 1) and restored cleanly."
 
   echo ""
   echo "================================================================"
-  echo "RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED"
+  echo "RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED (8 passed, 0 skipped, 0 failed)"
   echo "================================================================"
 }
 

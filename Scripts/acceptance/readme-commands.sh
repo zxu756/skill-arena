@@ -148,6 +148,8 @@ def run_cmd(cmd: str, cwd: Path) -> tuple[int, str]:
 
 
 executed_scopes: set[str] = set()
+passed_count = 0
+skipped_count = 0
 
 for doc_name, cmds, work_sub in (
     ("README.md", cmds_en, "work_en"),
@@ -168,6 +170,7 @@ for doc_name, cmds, work_sub in (
                 assert "并发控制" in out, out
             else:
                 assert "[concurrency" in out, out
+            passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified suite listing")
 
         elif "skill-arena run" in cmd and "--cli simulate" in cmd:
@@ -184,6 +187,7 @@ for doc_name, cmds, work_sub in (
             with sqlite3.connect(str(db_file)) as conn:
                 exp_sim = conn.execute("SELECT is_simulated FROM experiments").fetchone()
                 assert exp_sim == (1,), exp_sim
+            passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified SIMULATED CLI/SQLite/HTML")
 
         elif "skill-arena compare" in cmd:
@@ -194,6 +198,7 @@ for doc_name, cmds, work_sub in (
                 assert "成对胜率换算的 Elo（双组）" in out, out
             else:
                 assert "Win-Rate Derived Elo (2-arm)" in out, out
+            passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified leaderboard output")
 
         elif "skill-arena export-html" in cmd:
@@ -203,9 +208,11 @@ for doc_name, cmds, work_sub in (
             assert exported.is_file(), f"Missing {exported}"
             html_txt = exported.read_text(encoding="utf-8")
             assert "SIMULATED" in html_txt
+            passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified exported HTML")
 
         elif "skill-arena run" in cmd and "--cli claude" in cmd:
+            skipped_count += 1
             print(
                 f"  SKIPPED: {cmd} — invokes real paid external agent CLI (claude) with placeholder "
                 "/path/to/candidate-skill; prohibited in offline acceptance"
@@ -216,6 +223,7 @@ for doc_name, cmds, work_sub in (
             assert rc_gate != 0 and "--allow-unisolated-host-home" in out_gate, (rc_gate, out_gate)
 
         elif "skill-arena studio" in cmd:
+            skipped_count += 1
             print(
                 f"  SKIPPED: {cmd} — long-running blocking HTTP daemon on fixed port 8765 "
                 "(probed on ephemeral port against product-generated sim-check.sqlite)"
@@ -248,10 +256,12 @@ for doc_name, cmds, work_sub in (
             payload = json.loads(out_json.read_text(encoding="utf-8"))
             assert payload["category"] == "git_extracted", payload
             assert "pytest" in payload["test_command"], payload
+            passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified extracted TaskSpec JSON")
 
         elif cmd.startswith("./Scripts/test.sh scope "):
             if cmd in executed_scopes:
+                skipped_count += 1
                 print(
                     f"  SKIPPED: {cmd} — byte-identical scoped test command already executed and verified in README.md pass"
                 )
@@ -260,9 +270,11 @@ for doc_name, cmds, work_sub in (
                 assert rc == 0, f"{prefix} exited {rc}: {out}"
                 assert "passed" in out, out
                 executed_scopes.add(cmd)
+                passed_count += 1
                 print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified pytest passed")
 
         elif cmd in ("./Scripts/test.sh milestone 0", "./Scripts/test.sh milestone 1"):
+            skipped_count += 1
             print(
                 f"  SKIPPED: {cmd} — top-level milestone orchestrator that invokes readme-commands.sh itself "
                 "(skipped to prevent recursive self-invocation)"
@@ -271,8 +283,12 @@ for doc_name, cmds, work_sub in (
         else:
             raise AssertionError(f"Unhandled command in {doc_name}: {cmd}")
 
+total_count = passed_count + skipped_count
 print("\n================================================================")
-print("RESULT: ALL PARSED README COMMANDS VERIFIED (PARITY + ASSERTIONS)")
+print(
+    f"RESULT: README COMMAND REPLAY SUMMARY: {passed_count} passed, "
+    f"{skipped_count} skipped, 0 failed (out of {total_count} parsed commands)"
+)
 print("================================================================")
 PY
 }

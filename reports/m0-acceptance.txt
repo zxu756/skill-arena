@@ -18,7 +18,7 @@ Workspace: <REPO_ROOT> (branch: m1/real)
 
 [Row 5/8] Detached setsid & double-fork background daemons (K13)...
   PASS Row 5: Double-fork + setsid + close-fd + chdir('/') non-SIP daemons killed, recorded in leaked_processes, and trials marked FAILED (<10s).
-  Verified README.md & README.zh-CN.md explicitly document macOS SIP /bin/sleep double-fork non-guarantee.
+  Verified README.md & README.zh-CN.md explicitly document macOS SIP /bin/sleep and env-scrubbing (execve) double-fork non-guarantees.
 
 [Row 6/8] extract-commit omits commit message & isolates task workspace git history...
   PASS Row 6: Prompt contains zero commit message lines; workspace git log --all hides fix commit.
@@ -33,8 +33,9 @@ Workspace: <REPO_ROOT> (branch: m1/real)
   Mutation 8c (skip restoring tampered test files) -> FAILED tests/test_graders.py::test_protected_test_restoration_restores_original_bytes_and_cleans_diff (exit 1) & restored clean (git status empty, test GREEN).
   Mutation 8d (ignore agent timeout during grading) -> FAILED tests/test_sandbox.py::test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper (exit 1) & restored clean (git status empty, test GREEN).
   Mutation 8e (disable SKILL_ARENA_TRIAL_TOKEN scan) -> FAILED tests/test_sandbox.py::test_detached_double_fork_non_sip_daemon_is_killed_and_fails_trial (exit 1) & restored clean (git status empty, test GREEN).
-  PASS Row 8: All 5 mutations failed their exact named tests (exit 1) and restored cleanly.
+  Mutation 8f (disable sandbox open-file +D scan) -> FAILED tests/test_sandbox.py::test_detached_env_scrubbed_daemon_using_sandbox_dir_is_killed_and_fails_trial (exit 1) & restored clean (git status empty, test GREEN).
+  PASS Row 8: All 6 mutations failed their exact named tests (exit 1) and restored cleanly.
 
 ================================================================
-RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED
+RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED (8 passed, 0 skipped, 0 failed)
 ================================================================

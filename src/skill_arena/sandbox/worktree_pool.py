@@ -160,12 +160,14 @@ def _find_pids_holding_file(file_path: Path) -> set[int]:
 
 
 def _find_pids_with_cwd_under(target_dir: Path) -> set[int]:
+    """Return current-UID PIDs whose cwd or open/mapped files reside inside `target_dir`."""
     lsof_bin = shutil.which("lsof") or "/usr/sbin/lsof"
     if not os.path.exists(lsof_bin):
         return set()
     real_target = os.path.realpath(target_dir)
+    uid_str = str(os.getuid())
     proc = subprocess.run(
-        [lsof_bin, "-F", "pn", "-a", "-u", str(os.getuid()), "-d", "cwd"],
+        [lsof_bin, "-F", "pn", "-a", "-u", uid_str, "-d", "cwd"],
         capture_output=True,
         text=True,
         check=False,
@@ -179,6 +181,16 @@ def _find_pids_with_cwd_under(target_dir: Path) -> set[int]:
             p = line[1:]
             if p == real_target or p.startswith(real_target + os.sep):
                 found.add(cur_pid)
+    if os.path.isdir(real_target):
+        proc_open = subprocess.run(
+            [lsof_bin, "-F", "p", "-a", "-u", uid_str, "+D", real_target],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in proc_open.stdout.splitlines():
+            if line.startswith("p") and line[1:].isdigit():
+                found.add(int(line[1:]))
     return found
 
 

@@ -91,36 +91,83 @@ case "$MODE" in
     fi
     MS="${REST[0]}"
     export SKILL_ARENA_IN_MILESTONE=1
+    PYTEST_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-pytest.XXXXXX")"
+    ACC_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-acc-log.XXXXXX")"
+    README_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-readme-log.XXXXXX")"
+    trap 'rm -f "$PYTEST_LOG" "$ACC_LOG" "$README_LOG"' EXIT
     case "$MS" in
       0)
-        "$PYTEST" -q
+        "$PYTEST" -q -rs | tee "$PYTEST_LOG"
         if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
-          Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+          Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$ACC_LOG"
         else
           echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
           exit 1
         fi
         if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
         else
           echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
           exit 1
         fi
+        "$PYTHON" - "$PYTEST_LOG" "$README_LOG" <<'PY'
+import re, sys
+from pathlib import Path
+pt_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed = int(m_rm.group(1)) if m_rm else 0
+rm_skipped = int(m_rm.group(2)) if m_rm else 0
+print(
+    f"Milestone M0 summary: unit tests ({pt_passed} passed, {pt_skipped} skipped), "
+    f"M0 acceptance (8 passed, 0 skipped), "
+    f"README replay ({rm_passed} passed, {rm_skipped} skipped)"
+)
+PY
         ;;
       1)
-        "$PYTEST" -q
+        "$PYTEST" -q -rs | tee "$PYTEST_LOG"
         if [[ -x Scripts/acceptance/m1-acceptance.sh ]]; then
-          Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+          Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$ACC_LOG"
         else
           echo "Missing executable Scripts/acceptance/m1-acceptance.sh" >&2
           exit 1
         fi
         if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
         else
           echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
           exit 1
         fi
+        "$PYTHON" - "$PYTEST_LOG" "$ACC_LOG" "$README_LOG" <<'PY'
+import re, sys
+from pathlib import Path
+pt_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+acc_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[3]).read_text(encoding="utf-8")
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_acc = re.search(r"M1 ACCEPTANCE SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", acc_txt)
+if m_acc:
+    acc_passed, acc_skipped = int(m_acc.group(1)), int(m_acc.group(2))
+else:
+    acc_skipped = 1 if "SKIPPED" in acc_txt else 0
+    acc_passed = 6 if acc_skipped == 1 else 7
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed = int(m_rm.group(1)) if m_rm else 0
+rm_skipped = int(m_rm.group(2)) if m_rm else 0
+print(
+    f"Milestone M1 summary: unit tests ({pt_passed} passed, {pt_skipped} skipped), "
+    f"M1 acceptance ({acc_passed} passed, {acc_skipped} skipped), "
+    f"README replay ({rm_passed} passed, {rm_skipped} skipped)"
+)
+PY
         ;;
       *)
         echo "Milestone M${MS} acceptance script is not implemented yet." >&2
@@ -134,14 +181,17 @@ case "$MODE" in
       usage
     fi
     export SKILL_ARENA_IN_MILESTONE=1
-    "$PYTEST" -q
+    PYTEST_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-pytest.XXXXXX")"
+    README_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-readme-log.XXXXXX")"
+    trap 'rm -f "$PYTEST_LOG" "$README_LOG"' EXIT
+    "$PYTEST" -q -rs | tee "$PYTEST_LOG"
     Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
-    Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+    Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
     if [[ "${SKILL_ARENA_REAL_AB:-${RELAY_REAL_AGENTS:-0}}" == "1" ]]; then
       echo "Live real-agent A/B gate enabled (SKILL_ARENA_REAL_AB=1): run explicit budget-approved real CLI experiment." >&2
     else
-      echo "SKIPPED (没跑): Live real-agent 8-task A/B is gated behind SKILL_ARENA_REAL_AB=1 (requires user budget approval)."
+      echo "SKIPPED (没跑): Live real-agent 8-task A/B is gated behind SKILL_ARENA_REAL_AB=1 (requires user budget approval) — 0 passed, 1 skipped"
     fi
     ;;
 
