@@ -21,7 +21,11 @@ from skill_arena.i18n import (
     resolve_lang,
 )
 from skill_arena.models import ContenderConfig, TaskSpec
-from skill_arena.runners.harness_driver import HarnessDriver, validate_simulation_inputs
+from skill_arena.runners.harness_driver import (
+    SUPPORTED_RELAY_CLIS,
+    HarnessDriver,
+    validate_simulation_inputs,
+)
 from skill_arena.sandbox.worktree_pool import WorktreeSandboxPool
 from skill_arena.store.arena_db import ArenaDatabase
 from skill_arena.studio.server import create_studio_server
@@ -55,6 +59,10 @@ def run_ab_experiment(
     quiet: bool = False,
     lang: str = "en",
     allow_unisolated_host_home: bool = False,
+    isolate_home: bool = True,
+    auth_copy_mode: bool = False,
+    relay_script: str | Path | None = None,
+    budget_usd: float | None = None,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
     verify_suite_runners_available(tasks)
@@ -76,7 +84,14 @@ def run_ab_experiment(
             print("[SIMULATED] Synthetic pipeline calibration run - no real model or external SKILL.md was invoked.")
 
     pool = WorktreeSandboxPool()
-    driver = HarnessDriver(pool, allow_unisolated_host_home=allow_unisolated_host_home)
+    driver = HarnessDriver(
+        pool,
+        allow_unisolated_host_home=allow_unisolated_host_home,
+        isolate_home=isolate_home,
+        auth_copy_mode=auth_copy_mode,
+        relay_script=relay_script,
+        budget_usd=budget_usd,
+    )
     try:
         for task in tasks:
             for contender in contenders:
@@ -141,6 +156,15 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
                 f"{row['pass_hat_k'] * 100:7.1f}% {pad_cell(cps, 12, 'right')} {pad_cell(delta, 14, 'right')} "
                 f"{row['anti_cheat_integrity_rate'] * 100:9.1f}%"
             )
+        stat_comp = report.get("statistical_comparison") or {}
+        if stat_comp:
+            delta_pp = float(stat_comp.get("delta_pass_rate", 0.0)) * 100.0
+            ci_l_pp = float(stat_comp.get("ci_low", 0.0)) * 100.0
+            ci_h_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
+            print(
+                f"统计结论：{stat_comp.get('verdict_label_zh', '看不出差别')} | "
+                f"Pass@1 差值 {delta_pp:+.1f} pp，95% Newcombe-Wilson 置信区间 [{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
+            )
         print("指标说明：胜率Elo = 成对胜率换算的 Elo（双组）；首轮上下文税 = 实验组与对照组首轮输入 Token 均值之差。")
         return
 
@@ -166,6 +190,15 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
             f"{row['label'][:33]:<34} {row['role']:<10} {elo_str:>7} "
             f"{row['pass_at_1'] * 100:7.1f}% {row['pass_hat_k'] * 100:7.1f}% "
             f"{cps:>11} {delta:>14} {row['anti_cheat_integrity_rate'] * 100:9.1f}%"
+        )
+    stat_comp = report.get("statistical_comparison") or {}
+    if stat_comp:
+        delta_pp = float(stat_comp.get("delta_pass_rate", 0.0)) * 100.0
+        ci_l_pp = float(stat_comp.get("ci_low", 0.0)) * 100.0
+        ci_h_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
+        print(
+            f"Verdict: {stat_comp.get('verdict_label_en', 'Inconclusive')} | "
+            f"Pass@1 delta {delta_pp:+.1f} pp, 95% Newcombe-Wilson CI [{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
         )
     print(
         "Metrics: WR Elo = Win-Rate Derived Elo (2-arm); "
@@ -207,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--cli",
         default="simulate",
-        help="Agent CLI (simulate, claude, codex, opencode, vibe, agy).",
+        help="Agent CLI (simulate, or via agent-relay: claude, codex, vibe, agy).",
     )
     p_run.add_argument(
         "--model",
@@ -220,12 +253,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--db", default=".skill-arena/arena.sqlite", help="SQLite database path.")
     p_run.add_argument("--html-out", default=None, help="Optional path to export single-file HTML report.")
     p_run.add_argument(
+        "--relay-script",
+        default=None,
+        help="Optional path to agent-relay `relay.sh` (falls back to SKILL_ARENA_RELAY_SCRIPT or ~/.agents/skills/agent-relay/scripts/relay.sh).",
+    )
+    p_run.add_argument(
+        "--budget-usd",
+        type=float,
+        default=None,
+        help="Optional USD budget cap passed to agent-relay (`RELAY_BUDGET_USD`).",
+    )
+    p_run.add_argument(
+        "--copy-auth",
+        action="store_true",
+        help="Read-only copy minimal credential files into the per-trial isolated HOME.",
+    )
+    p_run.add_argument(
+        "--host-home",
+        action="store_true",
+        help="Disable per-trial isolated HOME and run inside the real host HOME (requires --allow-unisolated-host-home).",
+    )
+    p_run.add_argument(
         "--allow-unisolated-host-home",
         action="store_true",
-        help=(
-            "Explicitly acknowledge that M0 launches real agent CLIs in the host HOME directory "
-            "with permission prompts skipped (--dangerously-skip-permissions / --full-auto)."
-        ),
+        help="Explicitly consent to running an agent CLI in the unisolated host HOME (`--host-home`).",
     )
 
     p_comp = sub.add_parser("compare", help="Print leaderboard summary for an existing experiment.")
@@ -291,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         is_sim_cli = base_cli == "simulate"
+        isolate_home = not bool(args.host_home)
         if is_sim_cli:
             eff_model = args.model or "synthetic-sim-model"
             eff_title = args.title or "[SIMULATED] Synthetic Pipeline Calibration"
@@ -308,18 +360,25 @@ def main(argv: list[str] | None = None) -> int:
             ctrl_label = f"[SIMULATED] {eff_model} (Baseline · No Skill)"
             treat_label = f"[SIMULATED] {eff_model} (+ Synthetic Skill Pack)"
         else:
-            if not args.allow_unisolated_host_home:
+            if base_cli not in SUPPORTED_RELAY_CLIS:
+                supported_str = ", ".join(sorted(SUPPORTED_RELAY_CLIS))
                 msg = (
-                    f"错误：未指定 `--allow-unisolated-host-home`，已拒绝启动真实智能体 CLI '{raw_cli}'。"
-                    "当前 M0 版本会在真实用户 HOME 目录下（可访问 ~/.claude 与 ~/.agents/skills）"
-                    "以跳过权限确认模式（--dangerously-skip-permissions / --full-auto）运行。"
-                    "如确认知晓风险，请显式传入 `--allow-unisolated-host-home`。"
+                    f"错误：不支持的 CLI '{raw_cli}'。真实智能体执行统一通过 agent-relay (`relay.sh`) 调度，仅支持：{supported_str}。"
                     if is_zh
                     else (
-                        f"Error: Refusing to launch real agent CLI '{raw_cli}' without `--allow-unisolated-host-home`. "
-                        "In M0, SkillArena runs the agent in your real HOME directory (where ~/.claude and "
-                        "~/.agents/skills are visible and writable) with skipped permission prompts "
-                        "(--dangerously-skip-permissions / --full-auto). Pass `--allow-unisolated-host-home` to proceed."
+                        f"Error: Unsupported CLI '{raw_cli}'. Real agent execution routes exclusively through "
+                        f"agent-relay (`relay.sh`), which supports: {supported_str}."
+                    )
+                )
+                print(msg, file=sys.stderr)
+                return 2
+            if not isolate_home and not args.allow_unisolated_host_home:
+                msg = (
+                    f"错误：指定 `--host-home` 时必须同时传入 `--allow-unisolated-host-home`，已拒绝在真实宿主 HOME 目录启动 '{raw_cli}'。"
+                    if is_zh
+                    else (
+                        f"Error: Refusing to launch '{raw_cli}' with `--host-home` in the real host HOME directory "
+                        "without `--allow-unisolated-host-home`."
                     )
                 )
                 print(msg, file=sys.stderr)
@@ -353,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
                     model=eff_model,
                     skill_paths=[],
                     strip_default_skills=True,
+                    isolate_home=isolate_home,
+                    auth_copy_mode=bool(args.copy_auth),
                     allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
                 ),
                 ContenderConfig(
@@ -363,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
                     model=eff_model,
                     skill_paths=list(args.skill),
                     strip_default_skills=True,
+                    isolate_home=isolate_home,
+                    auth_copy_mode=bool(args.copy_auth),
                     allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
                 ),
             ]
@@ -375,6 +438,10 @@ def main(argv: list[str] | None = None) -> int:
                 k_reps=args.reps,
                 lang=lang,
                 allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                isolate_home=isolate_home,
+                auth_copy_mode=bool(args.copy_auth),
+                relay_script=args.relay_script,
+                budget_usd=args.budget_usd,
             )
         except (ValueError, PermissionError, RuntimeError) as exc:
             print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)

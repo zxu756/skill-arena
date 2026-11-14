@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "skill-arena"
 version = "0.2.0"
-description = "Cross-vendor coding agent & SKILL.md scientific A/B benchmark harness with isolated git worktrees, loopback token wire-tap, deterministic anti-cheat graders, and dual-track trajectory replay."
+description = "Controlled git-worktree & isolated-HOME A/B benchmark harness for coding agents and SKILL.md rules via agent-relay, agent-xray streaming metering, Newcombe-Wilson 95% confidence intervals, and deterministic anti-cheat graders."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"

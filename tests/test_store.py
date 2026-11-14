@@ -145,3 +145,84 @@ def test_simulated_experiment_persists_simulated_flags_in_db_and_report(tmp_path
     assert report["is_simulated"] is True
     for row in report["leaderboard"]:
         assert row["is_simulated"] is True
+
+
+def test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner(tmp_path: Path) -> None:
+    for label_case, ctrl_passes, treat_passes in (
+        ("half", 10, 10),
+        ("all_pass", 20, 20),
+        ("all_fail", 0, 0),
+    ):
+        db = ArenaDatabase(tmp_path / f"ci_{label_case}.sqlite")
+        ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="claude-sonnet-4-5")
+        treat = ContenderConfig(contender_id="treat", label="Treatment", role="treatment", cli="claude", model="claude-sonnet-4-5")
+        exp_id = f"exp_{label_case}"
+        db.create_experiment(exp_id, title="Equal Rate 20x20", suite_name="s", k_reps=20, contenders=[ctrl, treat])
+
+        for rep in range(1, 21):
+            db.record_trial(_make_trial(exp_id, "t1", ctrl, rep, rep <= ctrl_passes))
+            db.record_trial(_make_trial(exp_id, "t1", treat, rep, rep <= treat_passes))
+
+        report = db.build_comparison_report(exp_id)
+        sc = report["statistical_comparison"]
+        assert sc["method"] == "newcombe_wilson_95"
+        assert sc["control_trials"] == 20
+        assert sc["treatment_trials"] == 20
+        assert sc["ci_low"] < 0.0 < sc["ci_high"], f"Expected non-zero 95% CI spanning 0 for {label_case}, got {sc}"
+        assert sc["verdict"] == "inconclusive"
+        assert sc["winner"] is None
+        assert "看不出差别" in sc["verdict_label_zh"]
+        assert "Inconclusive" in sc["verdict_label_en"]
+        for row in report["leaderboard"]:
+            assert row["rank"] is None
+
+
+def test_newcombe_wilson_ci_clear_separation_ranks_winner_and_small_sample_is_inconclusive(tmp_path: Path) -> None:
+    db = ArenaDatabase(tmp_path / "ci_sep.sqlite")
+    ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="claude-sonnet-4-5")
+    treat = ContenderConfig(contender_id="treat", label="Treatment", role="treatment", cli="claude", model="claude-sonnet-4-5")
+
+    # 1. Clear separation: 2/20 vs 18/20 -> Treatment wins with 95% CI strictly > 0
+    db.create_experiment("exp_win", title="Clear Winner", suite_name="s", k_reps=20, contenders=[ctrl, treat])
+    for rep in range(1, 21):
+        db.record_trial(_make_trial("exp_win", "t1", ctrl, rep, rep <= 2))
+        db.record_trial(_make_trial("exp_win", "t1", treat, rep, rep <= 18))
+
+    rep_win = db.build_comparison_report("exp_win")
+    sc_win = rep_win["statistical_comparison"]
+    assert sc_win["verdict"] == "treatment_better"
+    assert sc_win["winner"] == "treat"
+    assert sc_win["ci_low"] > 0.0
+    lb_win = {r["contender_id"]: r for r in rep_win["leaderboard"]}
+    assert lb_win["treat"]["rank"] == 1
+    assert lb_win["ctrl"]["rank"] == 2
+
+    # 2. Small sample (3 vs 3): even 0/3 vs 3/3 must refuse ranking as inconclusive
+    db.create_experiment("exp_tiny", title="Tiny Sample", suite_name="s", k_reps=3, contenders=[ctrl, treat])
+    for rep in range(1, 4):
+        db.record_trial(_make_trial("exp_tiny", "t1", ctrl, rep, False))
+        db.record_trial(_make_trial("exp_tiny", "t1", treat, rep, True))
+
+    rep_tiny = db.build_comparison_report("exp_tiny")
+    sc_tiny = rep_tiny["statistical_comparison"]
+    assert sc_tiny["verdict"] == "inconclusive"
+    assert sc_tiny["winner"] is None
+    assert "看不出差别" in sc_tiny["verdict_label_zh"]
+    for row in rep_tiny["leaderboard"]:
+        assert row["rank"] is None
+
+
+def test_metered_tokens_with_unknown_model_price_keeps_cost_none(tmp_path: Path) -> None:
+    db = ArenaDatabase(tmp_path / "unknown_price.sqlite")
+    ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="custom-local-llm")
+    db.create_experiment("exp_up", title="Unknown Price", suite_name="s", k_reps=1, contenders=[ctrl])
+    tr = _make_trial("exp_up", "t1", ctrl, 1, True, metered=True, turn1_tokens=1400, cost_usd=0.01)
+    tr.usage.total_cost_usd = None
+    db.record_trial(tr)
+
+    report = db.build_comparison_report("exp_up")
+    row = report["leaderboard"][0]
+    assert row["is_metered"] is True
+    assert row["mean_first_turn_tokens"] == 1400
+    assert row["total_spend_usd"] is None
+    assert row["cost_per_success_usd"] is None

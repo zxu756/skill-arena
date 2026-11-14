@@ -1,23 +1,27 @@
-"""Unified headless CLI harness driver for Claude Code, Codex, OpenCode, Vibe, Antigravity, and Mock."""
+"""Unified headless harness driver routing real agents through agent-relay (`relay.sh`) and `agent-xray`."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
+import tempfile
 import time
-import urllib.request
 import uuid
 
 from skill_arena.graders.deterministic import evaluate_sandbox, verify_test_runner_available
-from skill_arena.models import ContenderConfig, TaskSpec, TrajectoryStep, TrialResult
-from skill_arena.runners.wire_tap_proxy import LoopbackWireTapProxy
+from skill_arena.models import ContenderConfig, TaskSpec, TokenUsageLedger, TrajectoryStep, TrialResult
+from skill_arena.runners.xray_bridge import XRayMeteringBridge
 from skill_arena.sandbox.skill_injector import SkillInjector, SkillMountReport
 from skill_arena.sandbox.worktree_pool import BoundedCommandOutcome, SandboxHandle, WorktreeSandboxPool
+
+SUPPORTED_RELAY_CLIS: frozenset[str] = frozenset({"claude", "codex", "agy", "vibe"})
 
 _REAL_MODEL_OR_SKILL_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:claude|sonnet|opus|haiku|anthropic|gpt|openai|o1|o3|o4|codex|gemini|deepseek|mistral|qwen|llama|grok|"
@@ -28,6 +32,176 @@ _PATH_LIKE_IN_TEXT_RE = re.compile(
     r"(?:^|\s)(?:~/|/(?:Users|home|tmp|var|etc|opt|private)/|\.\.?/)[^\s]+|(?:\.agents|\.claude)/[^\s]*|\b[\w./-]+/SKILL\.md\b",
     re.IGNORECASE,
 )
+_RELAY_HEADER_RE = re.compile(
+    r"^## (\S+?): (.*), (?:(\d+)s|done in-session by the conductor), (\d{4}-\d\d-\d\d \d\d:\d\d)$"
+)
+_RELAY_COST_RE = re.compile(r"\bcost \$([0-9]+(?:\.[0-9]+)?)")
+_RELAY_TOKENS_RE = re.compile(r"\btokens ([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)")
+
+
+@dataclass(slots=True)
+class RelayStepRecord:
+    """Parsed metadata from `<worktree>/.relay/LOG.md` and companion step logs."""
+
+    step_id: str | None = None
+    status: str | None = None
+    elapsed_sec: int | None = None
+    cost_usd: float | None = None
+    tokens: int | None = None
+    changed_files: list[str] = field(default_factory=list)
+    final_message: str = ""
+
+
+def _real_account_home() -> Path:
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def resolve_relay_script(explicit_path: str | Path | None = None) -> Path:
+    """Resolve `agent-relay/scripts/relay.sh` without hardcoded host paths."""
+    candidates: list[Path] = []
+    if explicit_path:
+        candidates.append(Path(explicit_path).expanduser())
+    env_override = os.environ.get("SKILL_ARENA_RELAY_SCRIPT", "").strip()
+    if env_override:
+        candidates.append(Path(env_override).expanduser())
+    rel_relay = Path(".agents") / "skills" / "agent-relay" / "scripts" / "relay.sh"
+    candidates.append(Path.home() / rel_relay)
+    candidates.append(_real_account_home() / rel_relay)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    raise FileNotFoundError(
+        "Could not locate `agent-relay/scripts/relay.sh`. "
+        "Pass `--relay-script <path>` or set `SKILL_ARENA_RELAY_SCRIPT`."
+    )
+
+
+def _inject_host_vendor_bin_if_needed(base_cli: str, env: dict[str, str]) -> None:
+    """Pin `RELAY_<VENDOR>_BIN` before changing child HOME so `relay.sh` finds installed CLIs."""
+    env_key = f"RELAY_{base_cli.upper()}_BIN"
+    if env.get(env_key) or os.environ.get(env_key):
+        return
+    search_path = env.get("PATH") or os.environ.get("PATH")
+    found = shutil.which(base_cli, path=search_path)
+    if found:
+        env[env_key] = found
+        return
+
+    host_home = _real_account_home()
+    fallbacks: list[Path] = []
+    if base_cli == "codex":
+        fallbacks.extend(
+            [
+                Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
+                Path("/Applications/Codex.app/Contents/Resources/codex"),
+            ]
+        )
+    elif base_cli == "agy":
+        fallbacks.append(host_home / ".local" / "bin" / "agy")
+    elif base_cli == "claude":
+        fallbacks.extend(
+            [
+                host_home / ".local" / "bin" / "claude",
+                host_home / ".claude" / "local" / "claude",
+            ]
+        )
+        desktop_root = host_home / "Library" / "Application Support" / "Claude" / "claude-code"
+        if desktop_root.is_dir():
+            versioned = sorted(
+                desktop_root.glob("*/*/claude.app/Contents/MacOS/claude"),
+                key=lambda p: p.stat().st_mtime if p.exists() else 0.0,
+                reverse=True,
+            )
+            fallbacks.extend(versioned)
+    elif base_cli == "vibe":
+        fallbacks.append(host_home / ".local" / "bin" / "vibe")
+
+    for candidate in fallbacks:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            env[env_key] = str(candidate)
+            return
+
+
+def parse_relay_artifacts(workdir: Path) -> RelayStepRecord:
+    """Parse `<workdir>/.relay/LOG.md` (plus JSON step logs if present) for the latest relay step."""
+    relay_dir = workdir / ".relay"
+    log_md = relay_dir / "LOG.md"
+    rec = RelayStepRecord()
+    if not log_md.is_file():
+        return rec
+
+    lines = log_md.read_text(encoding="utf-8", errors="replace").splitlines()
+    in_changed = False
+    for line in lines:
+        m_hdr = _RELAY_HEADER_RE.match(line)
+        if m_hdr:
+            rec = RelayStepRecord(
+                step_id=m_hdr.group(1),
+                status=m_hdr.group(2),
+                elapsed_sec=int(m_hdr.group(3)) if m_hdr.group(3) else None,
+            )
+            in_changed = False
+            continue
+        if rec.step_id is None:
+            continue
+        if line.strip() == "- files changed:":
+            in_changed = True
+            continue
+        if in_changed:
+            if line.startswith("  - "):
+                entry = line[4:].strip()
+                if entry and entry != "(none)":
+                    rec.changed_files.append(entry)
+                continue
+            in_changed = False
+        if line.startswith("- "):
+            m_cost = _RELAY_COST_RE.search(line)
+            if m_cost and rec.cost_usd is None:
+                rec.cost_usd = float(m_cost.group(1))
+            m_tok = _RELAY_TOKENS_RE.search(line)
+            if m_tok and rec.tokens is None:
+                rec.tokens = int(m_tok.group(1).replace(",", ""))
+
+    if rec.step_id:
+        out_path = relay_dir / f"{rec.step_id}.out.md"
+        if out_path.is_file():
+            rec.final_message = out_path.read_text(encoding="utf-8", errors="replace").strip()
+
+        vibe_export = relay_dir / f"{rec.step_id}.vibe" / "export.json"
+        if vibe_export.is_file():
+            try:
+                v_data = json.loads(vibe_export.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(v_data.get("cost_usd"), (int, float)):
+                    rec.cost_usd = float(v_data["cost_usd"])
+                v_usage = v_data.get("usage")
+                if isinstance(v_usage, dict) and isinstance(v_usage.get("total_tokens"), int):
+                    rec.tokens = int(v_usage["total_tokens"])
+            except (ValueError, OSError):
+                pass
+
+        raw_log = relay_dir / f"{rec.step_id}.log"
+        if raw_log.is_file():
+            raw_txt = raw_log.read_text(encoding="utf-8", errors="replace").strip()
+            candidates = [raw_txt] + [
+                ln.strip() for ln in reversed(raw_txt.splitlines()) if ln.strip().startswith("{")
+            ]
+            for chunk in candidates:
+                try:
+                    parsed = json.loads(chunk)
+                except ValueError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                if isinstance(parsed.get("total_cost_usd"), (int, float)):
+                    rec.cost_usd = float(parsed["total_cost_usd"])
+                u_obj = parsed.get("usage")
+                if isinstance(u_obj, dict) and isinstance(u_obj.get("total_tokens"), int):
+                    rec.tokens = int(u_obj["total_tokens"])
+                break
+
+    return rec
 
 
 def validate_simulation_inputs(
@@ -61,77 +235,26 @@ def validate_simulation_inputs(
             )
 
 
-def resolve_cli_binary(cli_name: str) -> str:
-    """Locate vendor CLI binaries across standard PATH and macOS desktop app bundles."""
-    found = shutil.which(cli_name)
-    if found:
-        return found
-
-    fallbacks: dict[str, list[str]] = {
-        "codex": [
-            "/Applications/Codex.app/Contents/Resources/codex",
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-        ],
-        "claude": [
-            str(Path.home() / ".local/bin/claude"),
-            "/Applications/Claude.app/Contents/Resources/claude",
-        ],
-        "opencode": [
-            str(Path.home() / ".opencode/bin/opencode"),
-            str(
-                Path.home()
-                / "Library/Application Support/ai.opencode.desktop/cli/2.2.1-arm64/opencode-cli"
-            ),
-        ],
-        "vibe": [str(Path.home() / ".local/bin/vibe")],
-        "agy": [str(Path.home() / ".antigravity/bin/agy"), "/usr/local/bin/agy"],
-    }
-    for candidate in fallbacks.get(cli_name, []):
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return cli_name
-
-
-def build_cli_command(contender: ContenderConfig, prompt: str) -> list[str]:
-    cli = contender.cli.split(":")[0]
-    binary = resolve_cli_binary(cli)
-    if cli == "claude":
-        cmd = [
-            binary,
-            "-p",
-            prompt,
-            "--model",
-            contender.model,
-            "--output-format",
-            "json",
-            "--dangerously-skip-permissions",
-        ]
-    elif cli == "codex":
-        cmd = [binary, "exec", "--full-auto", "-m", contender.model, prompt]
-    elif cli == "opencode":
-        cmd = [binary, "run", "-m", contender.model, prompt]
-    elif cli == "vibe":
-        cmd = [binary, "-p", prompt, "--output", "json"]
-    elif cli == "agy":
-        cmd = [binary, "-p", prompt]
-    else:
-        raise ValueError(f"Unsupported CLI harness: {contender.cli}")
-    cmd.extend(contender.extra_args)
-    return cmd
-
-
 class HarnessDriver:
-    """Executes one (TaskSpec, ContenderConfig, rep) trial inside an isolated worktree sandbox."""
+    """Executes one (TaskSpec, ContenderConfig, rep) trial inside an isolated worktree & temporary HOME."""
 
     def __init__(
         self,
         pool: WorktreeSandboxPool,
         upstream_api_url: str | None = None,
         allow_unisolated_host_home: bool = False,
+        isolate_home: bool = True,
+        auth_copy_mode: bool = False,
+        relay_script: str | Path | None = None,
+        budget_usd: float | None = None,
     ) -> None:
         self.pool = pool
         self.upstream_api_url = upstream_api_url
         self.allow_unisolated_host_home = allow_unisolated_host_home
+        self.isolate_home = isolate_home
+        self.auth_copy_mode = auth_copy_mode
+        self.relay_script = relay_script
+        self.budget_usd = budget_usd
 
     def run_trial(
         self,
@@ -146,18 +269,27 @@ class HarnessDriver:
                 "`--cli mock` has been removed and renamed to `--cli simulate` (`--cli mock` 已更名为 `--cli simulate`)."
             )
         is_simulated = base_cli == "simulate"
+        use_isolated_home = bool(self.isolate_home and contender.isolate_home)
+
         if is_simulated:
             validate_simulation_inputs(
                 model=contender.model,
                 label=contender.label,
                 skill_paths=contender.skill_paths,
             )
-        elif not (self.allow_unisolated_host_home or contender.allow_unisolated_host_home):
-            raise PermissionError(
-                "Refusing to launch real/headless agent CLI without `--allow-unisolated-host-home`: "
-                "M0 runs the agent in the real user HOME directory with skipped permission prompts "
-                "(--dangerously-skip-permissions / --full-auto)."
-            )
+        else:
+            if base_cli not in SUPPORTED_RELAY_CLIS:
+                raise ValueError(
+                    f"Unsupported CLI '{contender.cli}': real execution routes exclusively through "
+                    f"agent-relay (`relay.sh`), which supports {sorted(SUPPORTED_RELAY_CLIS)}."
+                )
+            if not use_isolated_home and not (
+                self.allow_unisolated_host_home or contender.allow_unisolated_host_home
+            ):
+                raise PermissionError(
+                    "Refusing to launch agent CLI in unisolated host HOME (`--host-home` / `isolate_home=False`) "
+                    "without `--allow-unisolated-host-home`."
+                )
 
         verify_test_runner_available(task.test_command)
 
@@ -165,14 +297,29 @@ class HarnessDriver:
         slug = f"{task.task_id}__{contender.contender_id}__r{rep_index}"
         started_at = datetime.now(timezone.utc).isoformat()
 
+        trial_home: Path | None = None
+        if not is_simulated and use_isolated_home:
+            trial_home = Path(tempfile.mkdtemp(prefix="sa-trial-home-"))
+
         handle = self.pool.acquire(task, slug)
         try:
-            mount_report = SkillInjector.apply(handle.root, contender)
+            mount_report = SkillInjector.apply(
+                handle.root,
+                contender,
+                trial_home=trial_home,
+                auth_copy_mode=bool(self.auth_copy_mode or contender.auth_copy_mode),
+            )
             exec_outcome: BoundedCommandOutcome | None = None
             if is_simulated:
                 usage, steps = self._execute_simulated_contender(handle, task, contender, mount_report, rep_index)
             else:
-                usage, steps, exec_outcome = self._execute_real_cli(handle, task, contender, mount_report)
+                usage, steps, exec_outcome = self._execute_real_cli(
+                    handle,
+                    task,
+                    contender,
+                    mount_report,
+                    use_isolated_home=use_isolated_home,
+                )
 
             verdict, git_diff = evaluate_sandbox(
                 handle,
@@ -218,6 +365,8 @@ class HarnessDriver:
             )
         finally:
             self.pool.release(handle)
+            if trial_home is not None and trial_home.exists():
+                shutil.rmtree(trial_home, ignore_errors=True)
 
     def _execute_real_cli(
         self,
@@ -225,8 +374,12 @@ class HarnessDriver:
         task: TaskSpec,
         contender: ContenderConfig,
         mount_report: SkillMountReport,
+        *,
+        use_isolated_home: bool,
     ):
         base_cli = contender.cli.split(":", 1)[0]
+        relay_script = resolve_relay_script(self.relay_script)
+
         upstream = self.upstream_api_url
         if upstream is None:
             if base_cli == "claude":
@@ -234,32 +387,62 @@ class HarnessDriver:
             elif base_cli == "codex":
                 upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
 
-        proxy = LoopbackWireTapProxy(upstream_base_url=upstream, default_model=contender.model)
-        proxy_url = proxy.start()
+        prompt_dir = Path(tempfile.mkdtemp(prefix="sa-prompt-"))
+        prompt_file = prompt_dir / "prompt.md"
+        prompt_file.write_text(task.prompt, encoding="utf-8")
+
+        proxy = XRayMeteringBridge(anthropic_upstream=upstream, openai_upstream=upstream)
+        proxy.start()
         t0 = time.perf_counter()
         try:
-            env = dict(mount_report.isolated_env_vars)
-            if base_cli == "claude" and upstream:
-                env["ANTHROPIC_BASE_URL"] = proxy_url
-            elif base_cli == "codex" and upstream:
-                env["OPENAI_BASE_URL"] = f"{proxy_url}/v1"
+            env = proxy.agent_env(mount_report.isolated_env_vars)
+            _inject_host_vendor_bin_if_needed(base_cli, env)
+            env["RELAY_TIMEOUT"] = str(max(1, int(task.timeout_sec)))
+            if base_cli == "claude":
+                env["RELAY_CLAUDE_MODEL"] = contender.model
+            elif base_cli == "agy":
+                env["RELAY_AGY_MODEL"] = contender.model
+            if self.budget_usd is not None:
+                env["RELAY_BUDGET_USD"] = f"{self.budget_usd:.4f}"
 
-            cmd = build_cli_command(contender, task.prompt)
+            unset_keys: tuple[str, ...] = ()
+            if os.environ.get("SKILL_ARENA_PRESERVE_RELAY_WORKER") != "1":
+                unset_keys = ("RELAY_WORKER",)
+
+            cmd = ["/bin/bash", str(relay_script), base_cli, str(handle.root), str(prompt_file)]
+            if contender.extra_args:
+                cmd.extend(["--", *contender.extra_args])
+
             outcome = self.pool.run_bounded_command_detailed(
                 cmd,
                 cwd=handle.root,
                 env=env,
-                timeout_sec=task.timeout_sec,
+                timeout_sec=max(5, int(task.timeout_sec) + 8),
                 reap_sandbox_cwd=True,
+                unset_env=unset_keys,
             )
-            rc = outcome.returncode
+
+            relay_rec = parse_relay_artifacts(handle.root)
+            shutil.rmtree(handle.root / ".relay", ignore_errors=True)
+
+            timed_out = bool(
+                outcome.timed_out
+                or outcome.returncode == 124
+                or (relay_rec.status or "").startswith("timeout")
+            )
+            outcome.timed_out = timed_out
+            rc = 124 if timed_out else outcome.returncode
             stdout = outcome.stdout
             stderr = outcome.stderr
-            timed_out = outcome.timed_out
             wall_ms = int((time.perf_counter() - t0) * 1000)
+
             usage, turn_records = proxy.summarize(injected_skill_tokens_est=mount_report.estimated_tokens)
             if usage.total_latency_ms == 0:
                 usage.total_latency_ms = wall_ms
+            usage.isolated_home_used = use_isolated_home
+            usage.relay_status = relay_rec.status
+            usage.relay_cost_usd = relay_rec.cost_usd
+            usage.relay_tokens = relay_rec.tokens
 
             steps: list[TrajectoryStep] = []
             if mount_report.mounted_skill_names:
@@ -269,7 +452,10 @@ class HarnessDriver:
                         timestamp_ms=10,
                         kind="skill_mount",
                         summary=f"Mounted skills: {', '.join(mount_report.mounted_skill_names)}",
-                        detail=f"Injected {mount_report.total_injected_chars} chars (~{mount_report.estimated_tokens} tokens) into workspace.",
+                        detail=(
+                            f"Injected {mount_report.total_injected_chars} chars "
+                            f"(~{mount_report.estimated_tokens} tokens) into isolated HOME & workspace."
+                        ),
                     )
                 )
             for rec in turn_records:
@@ -279,7 +465,10 @@ class HarnessDriver:
                         timestamp_ms=rec.latency_ms,
                         kind="tool_call",
                         summary=f"API Turn #{rec.turn_index} ({rec.model})",
-                        detail=f"Endpoint {rec.endpoint} | prompt={rec.prompt_tokens} (cached={rec.cached_tokens}), out={rec.completion_tokens}",
+                        detail=(
+                            f"Endpoint {rec.endpoint} | prompt={rec.prompt_tokens} "
+                            f"(cached={rec.cached_tokens}), out={rec.completion_tokens}, ttft={rec.ttft_ms:.1f}ms"
+                        ),
                         prompt_tokens=rec.prompt_tokens or 0,
                         cached_tokens=rec.cached_tokens or 0,
                         completion_tokens=rec.completion_tokens or 0,
@@ -287,24 +476,30 @@ class HarnessDriver:
                         cost_usd=rec.cost_usd or 0.0,
                     )
                 )
-            tail = (stdout or stderr or "").strip()[-900:]
+            tail = (relay_rec.final_message or stdout or stderr or "").strip()[-900:]
             reap_suffix = ""
             if outcome.reaped_descendant_pids:
                 reap_suffix = f" [reaped detached PIDs: {outcome.reaped_descendant_pids}]"
             if outcome.unreaped_descendant_pids:
                 reap_suffix += f" [UNREAPED orphan PIDs: {outcome.unreaped_descendant_pids}]"
+            relay_tag = f" [relay={relay_rec.status}]" if relay_rec.status else ""
             steps.append(
                 TrajectoryStep(
                     step_index=len(steps) + 1,
                     timestamp_ms=wall_ms,
                     kind="thought",
-                    summary=f"CLI exited with code {rc}" + (" (TIMED OUT)" if timed_out else "") + reap_suffix,
-                    detail=tail or "Completed headless execution.",
+                    summary=f"agent-relay ({base_cli}) exited with code {rc}"
+                    + (" (TIMED OUT)" if timed_out else "")
+                    + relay_tag
+                    + reap_suffix,
+                    detail=tail or "Completed headless execution via agent-relay.",
                     latency_ms=wall_ms,
                 )
             )
             return usage, steps, outcome
         finally:
+            shutil.rmtree(handle.root / ".relay", ignore_errors=True)
+            shutil.rmtree(prompt_dir, ignore_errors=True)
             proxy.stop()
 
     def _execute_simulated_contender(
@@ -315,142 +510,129 @@ class HarnessDriver:
         mount_report: SkillMountReport,
         rep_index: int,
     ):
-        """Deterministic simulator that drives real HTTP calls through LoopbackWireTapProxy and edits sandbox files."""
+        """Deterministic offline simulator that edits sandbox files and builds synthetic telemetry."""
         mode = contender.cli.split(":", 1)[1] if ":" in contender.cli else (
             "skilled" if (mount_report.mounted_skill_names or contender.role == "treatment") else "baseline"
         )
         seed_int = int(hashlib.sha256(f"{task.task_id}:{contender.contender_id}:{rep_index}".encode()).hexdigest()[:8], 16)
         skill_tax = mount_report.estimated_tokens if mount_report.estimated_tokens > 0 else (640 if mode == "skilled" else 0)
 
-        turn_counter = {"n": 0}
-
-        def responder(path: str, req_body: dict) -> tuple[int, dict]:
-            turn_counter["n"] += 1
-            n = turn_counter["n"]
+        num_turns = 3 if mode == "skilled" else 4
+        synth_turns: list[tuple[int, int, int, int, float]] = []
+        for n in range(1, num_turns + 1):
             base_in = 1820 + (seed_int % 240) + skill_tax + (n - 1) * 540
             cached = 0 if n == 1 else int(base_in * (0.76 if mode == "skilled" else 0.45))
+            uncached = max(120, base_in - cached)
+            total_p = uncached + cached
             out_tok = (310 if mode == "skilled" else 560) + (seed_int % 90)
-            return (
-                200,
-                {
-                    "id": f"msg_mock_{n}",
-                    "model": contender.model,
-                    "usage": {
-                        "input_tokens": max(120, base_in - cached),
-                        "cache_read_input_tokens": cached,
-                        "output_tokens": out_tok,
-                    },
-                },
+            turn_cost = round(
+                (uncached / 1_000_000.0) * 3.00
+                + (cached / 1_000_000.0) * 0.30
+                + (out_tok / 1_000_000.0) * 15.00,
+                6,
+            )
+            synth_turns.append((uncached, cached, total_p, out_tok, turn_cost))
+
+        synth_latencies = [1420 + (seed_int % 380) for _ in synth_turns]
+        if mode != "skilled":
+            synth_latencies = [2180 + (seed_int % 520) for _ in synth_turns]
+        usage = TokenUsageLedger(
+            turns=len(synth_turns),
+            uncached_input_tokens=sum(t[0] for t in synth_turns),
+            first_turn_prompt_tokens=synth_turns[0][2],
+            total_prompt_tokens=sum(t[2] for t in synth_turns),
+            cached_prompt_tokens=sum(t[1] for t in synth_turns),
+            completion_tokens=sum(t[3] for t in synth_turns),
+            ttft_ms=float(390 + (seed_int % 140)),
+            total_latency_ms=sum(synth_latencies),
+            total_cost_usd=round(sum(t[4] for t in synth_turns), 6),
+            injected_skill_tokens_est=skill_tax,
+            is_metered=True,
+            usage_status="simulated",
+            is_simulated=True,
+        )
+
+        steps: list[TrajectoryStep] = []
+        elapsed = 0
+        if skill_tax > 0:
+            skill_names = ", ".join(mount_report.mounted_skill_names) or "synthetic-pack"
+            steps.append(
+                TrajectoryStep(
+                    step_index=1,
+                    timestamp_ms=25,
+                    kind="skill_mount",
+                    summary=f"[SIMULATED] Loaded synthetic profile ({skill_names})",
+                    detail=f"[SIMULATED] Synthetic Turn-1 context delta: +{skill_tax} tokens.",
+                    prompt_tokens=skill_tax,
+                )
             )
 
-        proxy = LoopbackWireTapProxy(default_model=contender.model, synthetic_responder=responder)
-        proxy_url = proxy.start()
-        try:
-            num_turns = 3 if mode == "skilled" else 4
-            for turn_i in range(1, num_turns + 1):
-                payload = json.dumps({"model": contender.model, "turn": turn_i}).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{proxy_url}/v1/messages",
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
+        if mode == "cheater":
+            for rel_test in task.protected_test_paths[:1]:
+                tpath = handle.root / rel_test
+                tpath.write_text(
+                    "import unittest\nclass Tampered(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+                    encoding="utf-8",
                 )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    resp.read()
-
-            usage, records = proxy.summarize(injected_skill_tokens_est=skill_tax)
-            usage.is_simulated = True
-            usage.usage_status = "simulated"
-            # Assign deterministic synthetic timing for simulator replay inspection
-            synth_latencies = [1420 + (seed_int % 380) for _ in records]
-            if mode != "skilled":
-                synth_latencies = [2180 + (seed_int % 520) for _ in records]
-            usage.ttft_ms = 390 + (seed_int % 140)
-            usage.total_latency_ms = sum(synth_latencies)
-
-            steps: list[TrajectoryStep] = []
-            elapsed = 0
-            if skill_tax > 0:
-                skill_names = ", ".join(mount_report.mounted_skill_names) or "synthetic-pack"
-                steps.append(
-                    TrajectoryStep(
-                        step_index=1,
-                        timestamp_ms=25,
-                        kind="skill_mount",
-                        summary=f"[SIMULATED] Loaded synthetic profile ({skill_names})",
-                        detail=f"[SIMULATED] Synthetic Turn-1 context delta: +{skill_tax} tokens.",
-                        prompt_tokens=skill_tax,
-                    )
+            steps.append(
+                TrajectoryStep(
+                    step_index=len(steps) + 1,
+                    timestamp_ms=920,
+                    kind="file_patch",
+                    summary=f"[SIMULATED] Modified protected test {task.protected_test_paths[0]}",
+                    detail="Overwrote failing assertions in test suite instead of fixing implementation.",
+                    prompt_tokens=synth_turns[0][2],
+                    completion_tokens=synth_turns[0][3],
+                    latency_ms=synth_latencies[0],
+                    cost_usd=synth_turns[0][4],
                 )
-
-            if mode == "cheater":
-                # Deliberately tamper with protected test file to test Anti-Cheat Integrity!
-                for rel_test in task.protected_test_paths[:1]:
-                    tpath = handle.root / rel_test
-                    tpath.write_text("import unittest\nclass Tampered(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n", encoding="utf-8")
-                steps.append(
-                    TrajectoryStep(
-                        step_index=len(steps) + 1,
-                        timestamp_ms=920,
-                        kind="file_patch",
-                        summary=f"[SIMULATED] Modified protected test {task.protected_test_paths[0]}",
-                        detail="Overwrote failing assertions in test suite instead of fixing implementation.",
-                        prompt_tokens=int(records[0].prompt_tokens or 0),
-                        completion_tokens=int(records[0].completion_tokens or 0),
-                        latency_ms=synth_latencies[0],
-                        cost_usd=float(records[0].cost_usd or 0.0),
-                    )
-                )
-                return usage, steps
-
-            # Decide whether baseline succeeds on easy tasks or fails on subtle edge cases
-            apply_full_solution = mode == "skilled"
-            if mode == "baseline":
-                # Baseline passes 3 of 8 tasks consistently, and is flaky on 1 task
-                easy_ids = {"refac-01-cron-expression-parser", "sec-01-dsn-credential-redactor"}
-                flaky_ids = {"refac-02-jsonl-ring-compactor"}
-                if task.task_id in easy_ids:
-                    apply_full_solution = True
-                elif task.task_id in flaky_ids and rep_index == 1:
-                    apply_full_solution = True
-
-            file_map = task.reference_solution_files if apply_full_solution else (task.naive_attempt_files or {})
-            for rel_path, new_src in file_map.items():
-                dest = handle.root / rel_path
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(new_src, encoding="utf-8")
-
-            step_Templates = (
-                [
-                    ("thought", "Analyzed task invariants & SKILL.md guardrails", "Identified exact edge-case contract before editing implementation."),
-                    ("tool_call", f"Read workspace & inspected {len(task.seed_files)} files", f"Checked {', '.join(list(task.seed_files.keys())[:2])} and test suite."),
-                    ("file_patch", f"Applied targeted patch ({len(file_map)} file)", f"Updated {', '.join(file_map.keys()) or 'workspace'} with minimal diff."),
-                ]
-                if apply_full_solution
-                else [
-                    ("thought", "Scanned prompt without specialized skill checklist", "Drafted surface patch without checking concurrency/sloplint edge cases."),
-                    ("tool_call", "Inspected source files & ran exploratory command", f"Opened {', '.join(list(task.seed_files.keys())[:2])}."),
-                    ("file_patch", "Wrote partial implementation attempt", "Missed strict invariant / left off-grid CSS or unguarded lock path."),
-                    ("thought", "Retried after test failure without root-cause fix", "Burned extra completion tokens re-reading stack trace."),
-                ]
             )
-
-            for idx, (rec, lat, (kind, summ, det)) in enumerate(zip(records, synth_latencies, step_Templates)):
-                elapsed += lat
-                steps.append(
-                    TrajectoryStep(
-                        step_index=len(steps) + 1,
-                        timestamp_ms=elapsed,
-                        kind=kind,
-                        summary=f"[SIMULATED] {summ}",
-                        detail=det,
-                        prompt_tokens=int(rec.prompt_tokens or 0),
-                        cached_tokens=int(rec.cached_tokens or 0),
-                        completion_tokens=int(rec.completion_tokens or 0),
-                        latency_ms=lat,
-                        cost_usd=float(rec.cost_usd or 0.0),
-                    )
-                )
             return usage, steps
-        finally:
-            proxy.stop()
+
+        apply_full_solution = mode == "skilled"
+        if mode == "baseline":
+            easy_ids = {"refac-01-cron-expression-parser", "sec-01-dsn-credential-redactor"}
+            flaky_ids = {"refac-02-jsonl-ring-compactor"}
+            if task.task_id in easy_ids:
+                apply_full_solution = True
+            elif task.task_id in flaky_ids and rep_index == 1:
+                apply_full_solution = True
+
+        file_map = task.reference_solution_files if apply_full_solution else (task.naive_attempt_files or {})
+        for rel_path, new_src in file_map.items():
+            dest = handle.root / rel_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(new_src, encoding="utf-8")
+
+        step_templates = (
+            [
+                ("thought", "Analyzed task invariants & SKILL.md guardrails", "Identified exact edge-case contract before editing implementation."),
+                ("tool_call", f"Read workspace & inspected {len(task.seed_files)} files", f"Checked {', '.join(list(task.seed_files.keys())[:2])} and test suite."),
+                ("file_patch", f"Applied targeted patch ({len(file_map)} file)", f"Updated {', '.join(file_map.keys()) or 'workspace'} with minimal diff."),
+            ]
+            if apply_full_solution
+            else [
+                ("thought", "Scanned prompt without specialized skill checklist", "Drafted surface patch without checking concurrency/sloplint edge cases."),
+                ("tool_call", "Inspected source files & ran exploratory command", f"Opened {', '.join(list(task.seed_files.keys())[:2])}."),
+                ("file_patch", "Wrote partial implementation attempt", "Missed strict invariant / left off-grid CSS or unguarded lock path."),
+                ("thought", "Retried after test failure without root-cause fix", "Burned extra completion tokens re-reading stack trace."),
+            ]
+        )
+
+        for (_, cached_t, prompt_t, out_t, cost_t), lat, (kind, summ, det) in zip(synth_turns, synth_latencies, step_templates):
+            elapsed += lat
+            steps.append(
+                TrajectoryStep(
+                    step_index=len(steps) + 1,
+                    timestamp_ms=elapsed,
+                    kind=kind,
+                    summary=f"[SIMULATED] {summ}",
+                    detail=det,
+                    prompt_tokens=prompt_t,
+                    cached_tokens=cached_t,
+                    completion_tokens=out_t,
+                    latency_ms=lat,
+                    cost_usd=cost_t,
+                )
+            )
+        return usage, steps

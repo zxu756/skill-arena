@@ -2,32 +2,32 @@
 
 **English** | **[简体中文](README.zh-CN.md)**
 
-**Controlled Git-worktree A/B benchmark harness** for coding agents and `SKILL.md` rules, featuring per-trial sandbox checkouts, clean-checkout deterministic unit & Hallmark craft grading, SHA-256 anti-cheat verification, a local HTTP loopback token proxy, and a bilingual (`中文 | EN`) dual-track trajectory replay Studio.
+**Controlled Git-worktree & isolated-`HOME` A/B benchmark harness** for coding agents and `SKILL.md` rules, featuring per-trial temporary `HOME` isolation, unified headless agent execution via `agent-relay` (`relay.sh`), streaming HTTP/SSE & OpenAI Responses token metering via `agent-xray`, Newcombe-Wilson 95% confidence intervals (`Inconclusive` / `看不出差别` when noisy), clean-checkout deterministic unit & Hallmark craft grading, SHA-256 anti-cheat verification, and a bilingual (`中文 | EN`) dual-track trajectory replay Studio.
 
-> **Release status**: Latest tagged release is `v0.2.0`. Entries marked **Unreleased (after `main` / `v0.2.0`)** below—including `--cli simulate` (replacing `--cli mock`), `--allow-unisolated-host-home`, clean-checkout anti-cheat grading, detached-process leak detection, `pytest` preflight checks, `Unmetered` reporting, and `./Scripts/test.sh`—live on the current development branch after `v0.2.0`. Screenshots were removed pending real `M1` A/B benchmark runs.
+> **Release status**: Latest tagged release is `v0.2.0`. Capabilities marked **Unreleased (after `main` / `v0.2.0`)** below—including per-trial isolated `HOME` (`--copy-auth`, `--host-home`, `--allow-unisolated-host-home`), `agent-relay` (`relay.sh`) execution, single-path `agent-xray` metering (streaming TTFT & OpenAI `/v1/responses`), Newcombe-Wilson 95% CI (`Inconclusive` / `看不出差别`), `--cli simulate` (replacing `--cli mock`), clean-checkout anti-cheat grading, detached-process leak detection, `pytest` preflight checks, and `./Scripts/test.sh`—live on the current development branch after `v0.2.0`. No real-agent leaderboard or screenshots are published yet pending a budget-approved live `SKILL_ARENA_REAL_AB=1` run.
 
 ## What SkillArena Does Today
 
-1. **Per-Trial Sandbox Checkouts & Clean-Checkout Grading** *(Unreleased after `v0.2.0`)* - Every `(task, contender, repetition)` runs in its own sandbox directory with process-group timeout termination and detached-descendant reaping. Any trial that times out or leaves escaped background processes running fails automatically. Grading runs inside a fresh clean task checkout carrying only permitted non-test implementation edits: agent-created `tests/*`, `__init__.py`, stdlib-shadowing modules (`unittest.py`, `pytest.py`, `sitecustomize.py`, etc.), and `0`-test runs all fail automatically, and `pytest`-based tasks verify `pytest` availability before trials start.
-2. **Workspace `SKILL.md` Mounting** - Mounts candidate `SKILL.md` trees into workspace `.agents/skills/` and `.claude/skills/` on the **Treatment** arm while leaving workspace skill directories empty on the **Control** arm (see **Current Limitations** below regarding host `HOME` global skills).
-3. **Local Loopback Usage Metering (`Unmetered` When Unavailable)** *(Unreleased after `v0.2.0`)* - Meters non-streaming Anthropic `/v1/messages` and OpenAI `/v1/chat/completions` JSON/SSE usage for proxied `claude` and `codex` runs. When an agent CLI is not wired through the proxy (`opencode`, `vibe`, `agy`) or upstream omits `usage`, SkillArena records `Unmetered` (`未计量`) rather than `0` tokens or `$0.0000`.
-4. **Transparent Pairwise & Economics Metrics** *(Renamed, Unreleased after `v0.2.0`)* - Reports empirical `Pass@1`, multi-run consistency `Pass^k` (`k/k` clean passes per task), amortized `Cost-per-Success ($)`, **Win-Rate Derived Elo (2-arm)** (closed-form 2-arm rating against Control at 1500), and **Turn-1 Context Tax** (*Mean Turn-1 input token delta: treatment minus baseline*).
-5. **SHA-256 Anti-Cheat Grader** - Verifies byte-exact SHA-256 digests of protected test files after agent execution, rejects forbidden test/runner paths, restores tampered tests, and fails the trial.
+1. **Per-Trial Isolated `HOME` & Workspace Sandbox** *(Unreleased after `v0.2.0`)* - Every `(task, contender, repetition)` runs in its own sandbox checkout and its own freshly created temporary `HOME` (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `VIBE_HOME`), cleaned up when the trial ends. **Control** sees `0` global skills and `0` workspace skills (pre-existing repo skill folders are stripped); **Treatment** sees **only** the candidate `--skill` mounted for that run, leaving the host `~/.claude` and `~/.agents/skills` untouched.
+2. **Unified Real-Agent Execution via `agent-relay` (`relay.sh`)** *(Unreleased after `v0.2.0`)* - Routes headless execution for `claude`, `codex`, `agy`, and `vibe` exclusively through `agent-relay` (`relay.sh <vendor> <workdir> <prompt-file>`), delegating per-vendor flags, `RELAY_TIMEOUT`, and `RELAY_BUDGET_USD` to `relay.sh`, parsing `.relay/LOG.md` step status/cost/tokens, and cleaning `.relay/` before diff grading.
+3. **Single-Path Streaming Metering via `agent-xray` (`Unmetered` When Unavailable)** *(Unreleased after `v0.2.0`)* - Delegates all HTTP/SSE wire metering to `agent-xray`'s `start_background_proxy(...)`, capturing streaming first-byte `ttft_ms`, Anthropic `/v1/messages`, OpenAI `/v1/chat/completions`, and OpenAI `/v1/responses` (`input_tokens`, `cached_tokens`, `output_tokens`, both SSE and JSON). When an agent does not traverse the Anthropic/OpenAI proxy (`agy`, `vibe`) or upstream omits `usage`, SkillArena reports `Unmetered` (`未计量`) rather than `0` tokens or `$0.0000`.
+4. **Statistical Uncertainty (`Newcombe-Wilson 95% CI`) & Economics Metrics** *(Unreleased after `v0.2.0`)* - Computes a closed-form 95% Newcombe-Wilson confidence interval on `Pass@1` difference (`p_treatment - p_control`). Whenever sample size is below `5` trials per arm or the 95% CI spans `0`, SkillArena reports **`Inconclusive` (`看不出差别`)** and assigns **no winner rank**, alongside `Pass^k`, amortized `Cost-per-Success ($)`, **Win-Rate Derived Elo (2-arm)**, and **Turn-1 Context Tax** (*Mean Turn-1 input token delta: treatment minus baseline*).
+5. **Clean-Checkout & SHA-256 Anti-Cheat Grader** *(Hardened, Unreleased after `v0.2.0`)* - Verifies byte-exact SHA-256 digests of protected test files, blocks agent-created `tests/*`, `__init__.py`, and stdlib-shadowing modules (`unittest.py`, `pytest.py`, `sitecustomize.py`), rejects `0`-test runs, fails trials on timeout or leaked background processes, and grades inside a clean baseline checkout carrying only permitted implementation edits.
 6. **Git Commit Task Extractor (`extract-commit`)** *(Hardened, Unreleased after `v0.2.0`)* - Extracts a benchmark `TaskSpec` from a historical bug-fix commit: strips commit messages from the prompt, exports a standalone pre-fix tree snapshot without fix-commit Git history, and auto-detects `pytest` vs `unittest` (requiring `--test-cmd` when ambiguous).
 7. **Bilingual CLI & Live Web Switcher** - Supports `--lang {auto,zh,en}`, `SKILL_ARENA_LANG`, and `LC_ALL` / `LANG` (`zh*`) auto-detection across CLI tables, Studio, and single-file HTML exports (`[SIMULATED]` banners included whenever synthetic mode is used).
 
 ## Current Limitations
 
-- **Host `HOME` global skills are still visible (`K1`, `M1` target)**: While workspace `.agents/skills/` and `.claude/skills/` are separated between Control and Treatment, SkillArena does not yet isolate `HOME`. Both arms can still see global skills under `~/.claude/skills` and `~/.agents/skills`. Per-trial isolated `HOME` directories are scheduled for `M1`.
-- **Explicit consent flag required for real agent CLIs (`K2`, Unreleased after `v0.2.0`)**: Because headless agents launch in your real `HOME` directory with skipped permission prompts (`--dangerously-skip-permissions` / `--full-auto`), `skill-arena run` refuses real CLIs unless you pass `--allow-unisolated-host-home`.
+- **Unverified live vendor login inside isolated `HOME` (`--copy-auth`)**: While isolated `HOME` staging and optional minimal credential copying (`--copy-auth`: `.claude/.credentials.json`, `.codex/auth.json`, `.vibe/.env`) are implemented and verified with offline stubs + real `relay.sh`, live login behavior across real paid `claude`, `codex`, `agy`, and `vibe` CLIs inside a fresh `HOME` has **not yet been executed** (`没跑`, pending user-approved live CLI runs). Similarly, the full 8-task live real-agent A/B (`SKILL_ARENA_REAL_AB=1`) has **not yet been run** offline to avoid unapproved API spend.
+- **Explicit consent required if opting out of `HOME` isolation (`--host-home`, `K2`)**: Per-trial isolated `HOME` is enabled by default. Passing `--host-home` disables `HOME` isolation and is refused unless paired with `--allow-unisolated-host-home`.
+- **Vendor CLI & proxy scope (`K7`–`K9`)**: Real-CLI execution delegates to `agent-relay` (`claude`, `codex`, `agy`, `vibe`); standalone `opencode` CLI flags were removed. `agent-xray` meters Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`, `/v1/responses`) HTTP/SSE traffic; CLIs using non-OpenAI/Anthropic transports (such as `agy` or Mistral `vibe`) report `Unmetered` for wire tokens while recording `relay.sh` step metadata.
 - **Detached macOS SIP platform-binary daemons (`K13`)**: SkillArena injects a unique `SKILL_ARENA_TRIAL_TOKEN` per trial and scans `ps eww` alongside inherited `flock` descriptors and workspace `cwd` checks to `SIGKILL` escaped non-SIP processes (`python`, `node`, Homebrew tools, etc.) and mark the trial failed with `leaked_processes` recorded. However, on macOS with System Integrity Protection (`SIP`) enabled, Apple platform binaries (such as `/bin/sleep` or `/bin/sh`) strip environment variables from `ps eww` for unprivileged callers; if a trial spawns a `SIP`-protected binary that performs double-fork + `setsid()` + closes file descriptors + `chdir("/")`, host-mode execution **does not guarantee** detecting or reaping that process (full containment requires VM isolation).
-- **`extract-commit` implementation filenames & `repo_path`**: While `extract-commit` removes commit subjects/bodies and exports a standalone pre-fix snapshot, the generated prompt currently lists the modified implementation filenames from the commit diff, and `TaskSpec.repo_path` points to the source repository path on disk (which an unisolated host-mode agent could read).
-- **Proxy coverage (`K7`–`K9`, `M1` target)**: `opencode`, `vibe`, and `agy` are not yet routed through `agent-relay` / metering and report `Unmetered`. Streaming responses are buffered before forwarding (affecting streaming TTFT), and OpenAI Responses API accounting is scheduled for `M1`.
+- **`extract-commit` implementation filenames & `repo_path`**: While `extract-commit` removes commit subjects/bodies and exports a standalone pre-fix snapshot, the generated prompt currently lists the modified implementation filenames from the commit diff, and `TaskSpec.repo_path` points to the source repository path on disk (which a host-process agent could read outside its worktree).
 - **Simulator scope (`K3`, Unreleased after `v0.2.0`)**: `--cli simulate` uses deterministic synthetic outcomes and token formulas to verify the pipeline offline. Every output is marked `SIMULATED`, and real model names or `--skill` paths are rejected in `simulate` mode.
 
 ## Quick Start
 
-Requires **Python 3.11+** and `git` (zero third-party runtime dependencies; grading `pytest`-based tasks requires `pytest` in the active `python3` environment). Note: `--cli simulate` and `--allow-unisolated-host-home` below are **Unreleased (after `main` / `v0.2.0`)**.
+Requires **Python 3.11+**, `git`, and sibling/installed `agent-xray` + `agent-relay` for real-CLI runs (grading `pytest`-based tasks requires `pytest` in the active `python3` environment). Note: `--cli simulate`, `--copy-auth`, `--budget-usd`, and `./Scripts/test.sh` below are **Unreleased (after `main` / `v0.2.0`)**.
 
 ```bash
 # 1. Inspect the built-in 8-task calibration suite (English & Simplified Chinese)
@@ -47,10 +47,10 @@ uv run skill-arena compare --lang en --db .skill-arena/sim-check.sqlite
 uv run skill-arena export-html --lang en --db .skill-arena/sim-check.sqlite --out .skill-arena/sim-export.html
 ```
 
-### Running a Real Headless Coding Agent (`--allow-unisolated-host-home`, Unreleased after `v0.2.0`)
+### Running a Real Headless Coding Agent via `agent-relay` & Isolated `HOME` (`Unreleased after v0.2.0`)
 
 ```bash
-# Requires an installed agent CLI and explicit acknowledgment of host HOME execution:
+# Runs each trial in an isolated temporary HOME via agent-relay (`relay.sh`) and agent-xray:
 uv run skill-arena run \
   --lang en \
   --suite concurrency \
@@ -58,7 +58,8 @@ uv run skill-arena run \
   --model claude-sonnet-4-5 \
   --skill /path/to/candidate-skill \
   --reps 3 \
-  --allow-unisolated-host-home
+  --budget-usd 2.0 \
+  --copy-auth
 
 # Launch local Web Studio (Scoreboard + Dual-Track Trajectory Replay)
 uv run skill-arena studio --lang en --db .skill-arena/arena.sqlite --port 8765
@@ -97,6 +98,7 @@ uv run skill-arena extract-commit \
 ./Scripts/test.sh scope store
 ./Scripts/test.sh scope cli
 ./Scripts/test.sh milestone 0
+./Scripts/test.sh milestone 1
 ```
 
 ## License

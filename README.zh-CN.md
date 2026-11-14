@@ -2,32 +2,32 @@
 
 **[English](README.md)** | **简体中文**
 
-**受控 Git Worktree 编程智能体与 `SKILL.md` A/B 基准评测框架**：提供逐轮独立沙盒检出、干净检出确定性单测与 Hallmark 前端工艺判分、受保护测试 SHA-256 防篡改校验、本地 HTTP 回环用量代理，以及支持 **中文 | EN** 实时切换的双轨轨迹与代码补丁回放工作台。
+**受控 Git Worktree 与独立 `HOME` 隔离的编程智能体及 `SKILL.md` A/B 基准评测框架**：提供逐试次独立临时 `HOME` 隔离、基于 `agent-relay`（`relay.sh`）的统一无头智能体调度、基于 `agent-xray` 的流式 HTTP/SSE 与 OpenAI Responses 用量监听、Newcombe-Wilson 95% 置信区间统计检验（差异不显著时直接判定 `看不出差别` / `Inconclusive`）、干净检出确定性单测与 Hallmark 前端工艺判分、受保护测试 SHA-256 防篡改校验，以及支持 **中文 | EN** 实时切换的双轨轨迹与代码补丁回放工作台。
 
-> **版本状态说明**：最新已发布标签版本为 `v0.2.0`。下文中标注 **未发布（`main` / `v0.2.0` 之后）** 的入口与行为——包括 `--cli simulate`（替代 `--cli mock`）、`--allow-unisolated-host-home`、干净检出防作弊判分、脱离后台进程残留判定、`pytest` 启动前自检、`未计量` 标记与 `./Scripts/test.sh`——均位于 `v0.2.0` 之后的当前开发分支。原演示截图已移除，待 `M1` 产出真实智能体 A/B 评测结果后再行补充。
+> **版本状态说明**：最新已发布标签版本为 `v0.2.0`。下文中标注 **未发布（`main` / `v0.2.0` 之后）** 的入口与行为——包括逐试次独立 `HOME` 隔离（`--copy-auth`、`--host-home`、`--allow-unisolated-host-home`）、`agent-relay`（`relay.sh`）调度、单一路径 `agent-xray` 流量计量（流式 TTFT 与 OpenAI `/v1/responses`）、Newcombe-Wilson 95% 置信区间（`看不出差别` / `Inconclusive`）、`--cli simulate`（替代 `--cli mock`）、干净检出防作弊判分、脱离后台进程残留判定、`pytest` 启动前自检与 `./Scripts/test.sh`——均位于 `v0.2.0` 之后的当前开发分支。在用户授权执行付费 `SKILL_ARENA_REAL_AB=1` 全量实测前，仓库不展示任何模拟排行榜或截图。
 
 ## 当前已实现能力
 
-1. **独立沙盒检出与干净目录判分**（*未发布，`v0.2.0` 之后*） - 每一次 `(任务, 参赛组别, 重复轮次)` 在独立沙盒目录中执行，配备进程组级超时强杀与脱离进程组的后台子孙进程回收；一旦发生超时或发现残留后台进程，该试次均直接判失败。判分在全新干净检出目录中进行，仅搬运允许的非测试源码变更：智能体新增或修改 `tests/*`、`__init__.py`、与标准库/测试器同名的模块（如 `unittest.py`、`pytest.py`、`sitecustomize.py`）或运行了 `0` 个测试均直接判失败，且对 `pytest` 题目会在开跑前自检 `pytest` 是否可用。
-2. **工作区级 `SKILL.md` 挂载对照** - 在 **实验组（Treatment）** 工作区的 `.agents/skills/` 与 `.claude/skills/` 中挂载待测技能目录，**对照组（Control）** 工作区不挂载待测技能（关于宿主 `HOME` 全局技能可见性的说明见下方 **当前限制**）。
-3. **本地回环用量监听（无数据时显式标记 `未计量`）**（*未发布，`v0.2.0` 之后*） - 对走本地代理的 `claude` 与 `codex` 非流式 `/v1/messages`、`/v1/chat/completions` 请求统计输入/缓存/输出 Token 与花费。对于暂未接入代理的 CLI（`opencode`、`vibe`、`agy`）或未返回 `usage` 的上游响应，统一记录并展示为 **`未计量`（`Unmetered`）**，绝不伪造为 `0` 或 `$0.0000`。
-4. **透明的成对比较与经济学指标**（*指标更名，未发布，`v0.2.0` 之后*） - 报告经验单次通过率 `Pass@1`、多轮连续全绿一致性 `Pass^k`（要求单任务 `k/k` 轮全部通过）、摊销失败损耗的 `单次成功成本 Cost-per-Success ($)`、**成对胜率换算的 Elo（双组）**（以对照组 1500 分为基准的双组闭式换算值），以及 **首轮上下文税（Turn-1 Context Tax）**（定义为 *实验组与对照组首轮输入 Token 均值之差*）。
-5. **SHA-256 防作弊完整性校验** - 运行后逐字节比对受保护测试文件的 SHA-256 摘要，拦截测试与运行器路径绕过，恢复被改动的测试文件并判定该轮违规失败。
+1. **逐试次独立临时 `HOME` 与工作区沙盒隔离**（*未发布，`v0.2.0` 之后*） - 每一次 `(任务, 参赛组别, 重复轮次)` 均在独立沙盒目录与全新创建的临时 `HOME`（统一重指 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`VIBE_HOME`）中运行，试次结束后自动清理。**对照组（Control）** 全局与工作区均为 `0` 个技能（自动剥离仓库内预置技能目录）；**实验组（Treatment）** 仅挂载本次指定的候选 `--skill`，绝不触碰或污染真实宿主的 `~/.claude` 与 `~/.agents/skills`。
+2. **统一通过 `agent-relay`（`relay.sh`）调度真实智能体**（*未发布，`v0.2.0` 之后*） - 已移除内部散落的各家 CLI 参数拼装代码，`claude`、`codex`、`agy`、`vibe` 统一交由 `agent-relay`（`relay.sh <vendor> <workdir> <prompt-file>`）管理模型参数、`RELAY_TIMEOUT` 超时与 `RELAY_BUDGET_USD` 预算，解析 `.relay/LOG.md` 中的状态与花费，并在防作弊与 Diff 判分前清理 `.relay/`。
+3. **单一路径 `agent-xray` 流式代理计量（无数据时显式标记 `未计量`）**（*未发布，`v0.2.0` 之后*） - 已删除重复的自建缓冲代理，全部 HTTP/SSE 监听统一复用 `agent-xray` 的 `start_background_proxy(...)`，支持流式首字延迟 `ttft_ms`、Anthropic `/v1/messages`、OpenAI `/v1/chat/completions` 与 OpenAI `/v1/responses`（流式 SSE 与非流式 JSON 的输入、缓存、输出 Token）。当智能体未走 Anthropic/OpenAI 协议（如 `agy`、`vibe`）或上游未返回 `usage` 时，统一显示 **`未计量`（`Unmetered`）**，绝不伪造为 `0` 或 `$0.0000`。
+4. **统计不确定性（Newcombe-Wilson 95% 置信区间）与经济学指标**（*未发布，`v0.2.0` 之后*） - 对两组 `Pass@1` 之差计算闭式 Newcombe-Wilson 95% 置信区间：当每组试验数少于 `5` 次或 95% 置信区间跨越 `0` 时，报告结论直接输出 **`看不出差别`（`Inconclusive`）** 且不排定名次；同时报告连续全绿一致性 `Pass^k`、摊销失败损耗的 `单次成功成本 Cost-per-Success ($)`、**成对胜率换算的 Elo（双组）** 以及 **首轮上下文税（Turn-1 Context Tax）**（定义为 *实验组与对照组首轮输入 Token 均值之差*）。
+5. **干净检出判分与 SHA-256 防作弊校验**（*加固项未发布，`v0.2.0` 之后*） - 运行后逐字节比对受保护测试文件的 SHA-256 摘要，拦截智能体新增或修改 `tests/*`、`__init__.py` 及标准库/测试器同名覆盖模块（`unittest.py`、`pytest.py`、`sitecustomize.py`），拒绝 `0` 测试空跑，对超时或残留后台进程直接判失败，并在仅含合法源码变更的全新干净检出目录中执行判分。
 6. **Git 历史提交任务提取（`extract-commit`）**（*加固项未发布，`v0.2.0` 之后*） - 从本地 Git 缺陷修复提交提取评测任务：提示词中不包含提交标题与正文说明，沙盒仅导出修复前父提交的干净文件树快照（不含修复提交的 `.git` 历史），并自动识别 `pytest` 与 `unittest`（无法唯一判定时要求显式传入 `--test-cmd`）。
 7. **原生中英双语 CLI 与实时切换看板** - 支持 `--lang {auto,zh,en}`、`SKILL_ARENA_LANG` 与 `LC_ALL` / `LANG`（`zh*`）自动识别；使用 `--cli simulate` 时，终端、数据库与导出 HTML 均显著标注 `[SIMULATED / 模拟数据]`。
 
 ## 当前限制
 
-- **对照组仍可见宿主 `HOME` 下的全局技能（`K1`，计划在 `M1` 隔离）**：虽然工作区内的 `.agents/skills/` 与 `.claude/skills/` 已按组隔离，但当前尚未替换子进程的 `HOME` 目录，两组仍可看到 `~/.claude/skills` 与 `~/.agents/skills` 中的宿主全局技能。按轮次隔离 `HOME` 与凭据目录将在 `M1` 实现。
-- **运行真实智能体需显式传入风险确认参数（`K2`，未发布，`v0.2.0` 之后）**：由于当前在真实用户 `HOME` 下以跳过权限确认方式（`--dangerously-skip-permissions` / `--full-auto`）启动无头智能体，未传入 `--allow-unisolated-host-home` 时 `skill-arena run` 会直接拒绝执行。
+- **各家真实 CLI 在隔离 `HOME` 下仅带凭据登录尚未实跑验证**：虽然独立临时 `HOME` 与最小凭据只读复制（`--copy-auth`：`.claude/.credentials.json`、`.codex/auth.json`、`.vibe/.env`）已实现并通过替身 CLI + 真实 `relay.sh` 端到端验证，但真实付费 `claude`、`codex`、`agy`、`vibe` 在替换 `HOME` 后能否仅凭复制凭据完成登录与执行**本轮未实跑（`没跑`）**（需用户授权调用真实外部 CLI）；内置 8 题的真实付费智能体全量 A/B（`SKILL_ARENA_REAL_AB=1`）默认在离线验收中跳过（`没跑`），以免产生未授权账单。
+- **关闭 `HOME` 隔离需显式传入风险确认参数（`--host-home`，`K2`）**：默认启用逐试次独立 `HOME` 隔离；若显式传入 `--host-home` 要求在真实宿主 `HOME` 下运行，必须同时传入 `--allow-unisolated-host-home`，否则直接拒绝启动。
+- **CLI 与代理协议覆盖范围（`K7`–`K9`）**：真实 CLI 统一通过 `agent-relay` 调度（支持 `claude`、`codex`、`agy`、`vibe`，已移除独立 `opencode` 拼装入口）。`agent-xray` 监听 Anthropic（`/v1/messages`）与 OpenAI（`/v1/chat/completions`、`/v1/responses`）协议；不走上述 HTTP 接口的 CLI（如 `agy`、`vibe`）在 Token 列显示 `未计量`，同时保留 `relay.sh` 记录的步骤状态与花费元数据。
 - **macOS `SIP` 系统二进制守护进程回收边界（`K13`）**：每次试次会注入唯一环境变量 `SKILL_ARENA_TRIAL_TOKEN`，结束时联合继承 `flock` 文件锁、沙盒 `cwd` 与 `ps eww` 扫描强杀逃逸的非 `SIP` 进程（如 `python`、`node`、Homebrew 工具等），在试次结果 `leaked_processes` 中记录残留进程并将该试次判失败。但在启用系统完整性保护（`SIP`）的 macOS 上，Apple 平台二进制（如 `/bin/sleep`、`/bin/sh`）对普通权限调用方的 `ps eww` 隐藏环境变量；若试次启动此类受 `SIP` 保护的系统程序并执行双 `fork` + `setsid()` + 关闭文件描述符 + `chdir("/")`，宿主机模式下**不保证**能检测或回收该守护进程（强隔离需依赖虚拟机）。
-- **`extract-commit` 提示词中的实现文件名与 `repo_path`**：`extract-commit` 虽然剥离了提交标题/正文并导出了独立文件树快照，但当前生成的提示词仍列出了该提交修改的实现文件名，且 `TaskSpec.repo_path` 指向磁盘上的源仓库路径（未隔离宿主模式下智能体若主动按该路径访问源仓库仍可读到历史）。
-- **计量代理覆盖范围（`K7`–`K9`，计划在 `M1` 统一）**：`opencode`、`vibe`、`agy` 尚未接入 `agent-relay` 统一计量，指标显示为 `未计量`；当前代理对流式响应采用整包缓冲转发（流式首字延迟与 OpenAI Responses 接口计量将在 `M1` 收敛）。
+- **`extract-commit` 提示词中的实现文件名与 `repo_path`**：`extract-commit` 虽然剥离了提交标题/正文并导出了独立文件树快照，但当前生成的提示词仍列出了该提交修改的实现文件名，且 `TaskSpec.repo_path` 指向磁盘上的源仓库路径（宿主机进程若主动越出工作目录按该路径读取源仓库仍可访问历史）。
 - **合成模拟器边界（`K3`，未发布，`v0.2.0` 之后）**：`--cli simulate` 仅用固定规则与合成公式离线自检评测管线，所有输出强制携带 `SIMULATED` 标记，且拒绝接收真实模型名称或 `--skill` 技能路径。
 
 ## 快速上手
 
-环境要求：**Python 3.11+** 与 `git`（零第三方运行时依赖；对使用 `pytest` 的题目判分时需当前 `python3` 环境已安装 `pytest`）。注：下方 `--cli simulate` 与 `--allow-unisolated-host-home` 为 **未发布（`main` / `v0.2.0` 之后）** 入口。
+环境要求：**Python 3.11+**、`git`，以及用于真实 CLI 模式的同级或已安装 `agent-xray` 与 `agent-relay`（对使用 `pytest` 的题目判分时需当前 `python3` 环境已安装 `pytest`）。注：下方 `--cli simulate`、`--copy-auth`、`--budget-usd` 与 `./Scripts/test.sh` 均为 **未发布（`main` / `v0.2.0` 之后）** 入口。
 
 ```bash
 # 1. 查看内置 8 项校准基准任务（简体中文与英文输出）
@@ -47,10 +47,10 @@ uv run skill-arena compare --lang zh --db .skill-arena/sim-check.sqlite
 uv run skill-arena export-html --lang zh --db .skill-arena/sim-check.sqlite --out .skill-arena/sim-export.html
 ```
 
-### 运行真实无头编程智能体（`--allow-unisolated-host-home`，未发布，`v0.2.0` 之后）
+### 通过 `agent-relay` 与独立隔离 `HOME` 运行真实无头智能体（未发布，`v0.2.0` 之后）
 
 ```bash
-# 需本机已安装对应 CLI，并显式确认知晓在宿主 HOME 下运行：
+# 每个试次在独立临时 HOME 下通过 agent-relay (`relay.sh`) 与 agent-xray 执行：
 uv run skill-arena run \
   --lang zh \
   --suite concurrency \
@@ -58,7 +58,8 @@ uv run skill-arena run \
   --model claude-sonnet-4-5 \
   --skill /path/to/candidate-skill \
   --reps 3 \
-  --allow-unisolated-host-home
+  --budget-usd 2.0 \
+  --copy-auth
 
 # 启动本地交互式 Web Studio（排行榜 + 双轨轨迹与 Git Diff 同步回放）
 uv run skill-arena studio --lang zh --db .skill-arena/arena.sqlite --port 8765
@@ -97,6 +98,7 @@ uv run skill-arena extract-commit \
 ./Scripts/test.sh scope store
 ./Scripts/test.sh scope cli
 ./Scripts/test.sh milestone 0
+./Scripts/test.sh milestone 1
 ```
 
 ## 开源许可

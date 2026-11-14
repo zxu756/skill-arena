@@ -146,19 +146,23 @@ def test_extract_commit_autodetects_pytest_and_noop_stub_fails(
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    noop = bin_dir / "opencode"
-    noop.write_text(f"#!{sys.executable}\nprint('noop')\n", encoding="utf-8")
+    noop = bin_dir / "claude"
+    noop.write_text(
+        f"#!{sys.executable}\nimport json, sys\n_ = sys.stdin.read()\nprint(json.dumps({{'result': 'noop\\nSTATUS: success'}}))\n",
+        encoding="utf-8",
+    )
     noop.chmod(noop.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(noop))
     monkeypatch.setenv("PATH", f"{bin_dir}:{Path(sys.executable).parent}:{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
 
     pool = WorktreeSandboxPool(tmp_path / "pool")
-    driver = HarnessDriver(pool, allow_unisolated_host_home=True)
+    driver = HarnessDriver(pool)
     contender = ContenderConfig(
         contender_id="ctrl",
         label="No-op Stub",
         role="control",
-        cli="opencode",
+        cli="claude",
         model="stub-model",
     )
     result = driver.run_trial("exp_pytest", spec, contender, rep_index=1)

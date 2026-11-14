@@ -123,14 +123,14 @@ d["timeout_sec"] = 3
 Path(sys.argv[1]).write_text(json.dumps(d, indent=2), encoding="utf-8")
 PY
 
-  # Verify K2 consent gate rejects stub real CLI without --allow-unisolated-host-home
-  cat > "${TMP_WORK}/bin/opencode" <<'SH'
+  # Verify K2 consent gate rejects --host-home without --allow-unisolated-host-home
+  cat > "${TMP_WORK}/bin/claude" <<'SH'
 #!/bin/sh
-exit 0
+printf '{"result": "stub\\nSTATUS: success"}\n'
 SH
-  chmod +x "${TMP_WORK}/bin/opencode"
-  if PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run --cli opencode --model stub-m --suite "$ONE_TASK_JSON" --reps 1 --db "${TMP_WORK}/gate.sqlite" >/dev/null 2>&1; then
-    echo "FAIL: real CLI ran without --allow-unisolated-host-home" >&2
+  chmod +x "${TMP_WORK}/bin/claude"
+  if RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run --cli claude --model stub-m --host-home --suite "$ONE_TASK_JSON" --reps 1 --db "${TMP_WORK}/gate.sqlite" >/dev/null 2>&1; then
+    echo "FAIL: real CLI with --host-home ran without --allow-unisolated-host-home" >&2
     exit 1
   fi
 
@@ -139,16 +139,19 @@ SH
   # ------------------------------------------------------------------
   echo ""
   echo "[Row 2/8] Stub writes wrong answer + tests/__init__.py (os._exit(0))..."
-  cat > "${TMP_WORK}/bin/opencode" <<PY
+  cat > "${TMP_WORK}/bin/claude" <<PY
 #!${PYTHON}
+import json, sys
 from pathlib import Path
+_ = sys.stdin.read()
 Path("rate_limiter.py").write_text("class TokenBucket:\n    pass\n", encoding="utf-8")
 Path("tests/__init__.py").write_text("import os\nos._exit(0)\n", encoding="utf-8")
+print(json.dumps({"result": "stub\nSTATUS: success"}))
 PY
-  chmod +x "${TMP_WORK}/bin/opencode"
+  chmod +x "${TMP_WORK}/bin/claude"
   ROW2_DB="${TMP_WORK}/row2.sqlite"
-  ROW2_OUT="$(PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+  ROW2_OUT="$(RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
+    --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW2_DB")"
   echo "$ROW2_OUT" | grep -q "Unmetered"
   "$PYTHON" - "$ROW2_DB" <<'PY'
@@ -169,16 +172,19 @@ PY
   # ------------------------------------------------------------------
   echo ""
   echo "[Row 3/8] Stub writes wrong answer + root unittest.py shadowing..."
-  cat > "${TMP_WORK}/bin/opencode" <<PY
+  cat > "${TMP_WORK}/bin/claude" <<PY
 #!${PYTHON}
+import json, sys
 from pathlib import Path
+_ = sys.stdin.read()
 Path("rate_limiter.py").write_text("class TokenBucket:\n    pass\n", encoding="utf-8")
 Path("unittest.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+print(json.dumps({"result": "stub\nSTATUS: success"}))
 PY
-  chmod +x "${TMP_WORK}/bin/opencode"
+  chmod +x "${TMP_WORK}/bin/claude"
   ROW3_DB="${TMP_WORK}/row3.sqlite"
-  PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+  RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
+    --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW3_DB" >/dev/null
   "$PYTHON" - "$ROW3_DB" <<'PY'
 import json, sqlite3, sys
@@ -206,16 +212,17 @@ from skill_arena.suites.builtin_tasks import load_builtin_suite
 t = load_builtin_suite(category="concurrency")[0]
 Path(sys.argv[1]).write_text(t.reference_solution_files["rate_limiter.py"], encoding="utf-8")
 PY
-  cat > "${TMP_WORK}/bin/opencode" <<PY
+  cat > "${TMP_WORK}/bin/claude" <<PY
 #!${PYTHON}
-import os, shutil, time
+import os, shutil, sys, time
+_ = sys.stdin.read()
 shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
 time.sleep(15)
 PY
-  chmod +x "${TMP_WORK}/bin/opencode"
+  chmod +x "${TMP_WORK}/bin/claude"
   ROW4_DB="${TMP_WORK}/row4.sqlite"
-  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
+    --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW4_DB" >/dev/null
   "$PYTHON" - "$ROW4_DB" <<'PY'
 import json, sqlite3, sys
@@ -235,10 +242,11 @@ PY
   echo ""
   echo "[Row 5/8] Detached setsid & double-fork background daemons (K13)..."
   ORPHAN_PID_LOG="${TMP_WORK}/orphan_pids.txt"
-  cat > "${TMP_WORK}/bin/opencode" <<PY
+  cat > "${TMP_WORK}/bin/claude" <<PY
 #!${PYTHON}
-import os, shutil, sys
+import json, os, shutil, sys
 from pathlib import Path
+_ = sys.stdin.read()
 shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
 pid1 = os.fork()
 if pid1 == 0:
@@ -260,13 +268,14 @@ if pid1 == 0:
         os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)"])
     os._exit(0)
 os.waitpid(pid1, 0)
+print(json.dumps({"result": "stub\nSTATUS: success"}))
 PY
-  chmod +x "${TMP_WORK}/bin/opencode"
+  chmod +x "${TMP_WORK}/bin/claude"
   ROW5_DB="${TMP_WORK}/row5.sqlite"
   T_START="$("$PYTHON" -c 'import time; print(time.monotonic())')"
-  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" SA_ORPHAN_PID_LOG="$ORPHAN_PID_LOG" PATH="${TMP_WORK}/bin:${PATH}" \
+  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" SA_ORPHAN_PID_LOG="$ORPHAN_PID_LOG" RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+    --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW5_DB" >/dev/null
   "$PYTHON" - "$T_START" "$ORPHAN_PID_LOG" "$ROW5_DB" <<'PY'
 import json, os, signal, sqlite3, sys, time
@@ -428,14 +437,14 @@ PY
 
   EXTRACTED_PYTEST="${TMP_WORK}/extracted_pytest.json"
   "$PYTHON" -m skill_arena.cli --lang en extract-commit --repo "$PYTEST_REPO" --commit HEAD --out "$EXTRACTED_PYTEST" >/dev/null
-  cat > "${TMP_WORK}/bin/opencode" <<'SH'
+  cat > "${TMP_WORK}/bin/claude" <<'SH'
 #!/bin/sh
-exit 0
+printf '{"result": "stub\\nSTATUS: success"}\n'
 SH
-  chmod +x "${TMP_WORK}/bin/opencode"
+  chmod +x "${TMP_WORK}/bin/claude"
   ROW7_DB="${TMP_WORK}/row7.sqlite"
-  PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+  RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
+    --cli claude --model stub-m \
     --suite "$EXTRACTED_PYTEST" --reps 1 --db "$ROW7_DB" >/dev/null
   "$PYTHON" - "$EXTRACTED_PYTEST" "$ROW7_DB" <<'PY'
 import json, sqlite3, sys
@@ -459,9 +468,9 @@ echo "No module named pytest" >&2
 exit 1
 SH
   chmod +x "${NO_PYTEST_BIN}/python3"
-  ln -sf "${TMP_WORK}/bin/opencode" "${NO_PYTEST_BIN}/opencode"
-  if PATH="${NO_PYTEST_BIN}:/usr/bin:/bin" "$PYTHON" -m skill_arena.cli --lang en run \
-    --cli opencode --model stub-m --allow-unisolated-host-home \
+  ln -sf "${TMP_WORK}/bin/claude" "${NO_PYTEST_BIN}/claude"
+  if RELAY_CLAUDE_BIN="${NO_PYTEST_BIN}/claude" PATH="${NO_PYTEST_BIN}:/usr/bin:/bin" "$PYTHON" -m skill_arena.cli --lang en run \
+    --cli claude --model stub-m \
     --suite "$EXTRACTED_PYTEST" --reps 1 --db "${TMP_WORK}/no_pytest.sqlite" >/dev/null 2>&1; then
     echo "FAIL: missing pytest in grading python3 did not fail preflight!" >&2
     exit 1

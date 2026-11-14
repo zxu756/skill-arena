@@ -545,7 +545,7 @@ def _task_sec_01_dsn_redactor() -> TaskSpec:
         title="Sanitize DSN passwords, Bearer tokens, and sk-* API keys in structured logs",
         category="security_hygiene",
         prompt=(
-            "Fix `sanitizer.py` so `redact_secrets(text)` masks URI passwords (`postgres://user:pass@host`), "
+            "Fix `sanitizer.py` so `redact_secrets(text)` masks URI passwords (`postgres://user:<password>@host`), "
             "`Bearer <token>` headers, and `sk-...` API keys with `[REDACTED]` without altering safe URLs or usernames."
         ),
         test_command="python3 -m unittest tests/test_sanitizer.py",

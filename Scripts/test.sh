@@ -90,24 +90,43 @@ case "$MODE" in
       usage
     fi
     MS="${REST[0]}"
-    if [[ "$MS" != "0" ]]; then
-      echo "Milestone M${MS} acceptance script is not implemented yet." >&2
-      exit 2
-    fi
     export SKILL_ARENA_IN_MILESTONE=1
-    "$PYTEST" -q
-    if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
-      Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
-    else
-      echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
-      exit 1
-    fi
-    if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
-    else
-      echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
-      exit 1
-    fi
+    case "$MS" in
+      0)
+        "$PYTEST" -q
+        if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
+          Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+        else
+          echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
+          exit 1
+        fi
+        if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
+          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+        else
+          echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
+          exit 1
+        fi
+        ;;
+      1)
+        "$PYTEST" -q
+        if [[ -x Scripts/acceptance/m1-acceptance.sh ]]; then
+          Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+        else
+          echo "Missing executable Scripts/acceptance/m1-acceptance.sh" >&2
+          exit 1
+        fi
+        if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
+          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+        else
+          echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "Milestone M${MS} acceptance script is not implemented yet." >&2
+        exit 2
+        ;;
+    esac
     ;;
 
   release)
@@ -116,23 +135,13 @@ case "$MODE" in
     fi
     export SKILL_ARENA_IN_MILESTONE=1
     "$PYTEST" -q
-    if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
-      Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+    Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+    Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+    Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+    if [[ "${SKILL_ARENA_REAL_AB:-${RELAY_REAL_AGENTS:-0}}" == "1" ]]; then
+      echo "Live real-agent A/B gate enabled (SKILL_ARENA_REAL_AB=1): run explicit budget-approved real CLI experiment." >&2
     else
-      echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
-      exit 1
-    fi
-    if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
-    else
-      echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
-      exit 1
-    fi
-    if [[ "${RELAY_REAL_AGENTS:-0}" == "1" ]]; then
-      echo "RELAY_REAL_AGENTS=1 enabled: live real-agent A/B evaluation belongs to M1 (not implemented in M0)." >&2
-      exit 2
-    else
-      echo "Real agent checks: SKIPPED (RELAY_REAL_AGENTS!=1)"
+      echo "SKIPPED (没跑): Live real-agent 8-task A/B is gated behind SKILL_ARENA_REAL_AB=1 (requires user budget approval)."
     fi
     ;;
 

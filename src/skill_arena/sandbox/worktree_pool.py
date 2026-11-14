@@ -30,7 +30,20 @@ _STDLIB_AND_RUNNER_MODULES: frozenset[str] = frozenset(sys.stdlib_module_names) 
     "usercustomize",
 }
 _HARNESS_IGNORE_TOP_DIRS: frozenset[str] = frozenset(
-    {".git", ".agents", ".claude", ".skill-arena-env", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    {
+        ".git",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".vibe",
+        ".opencode",
+        ".relay",
+        ".skill-arena-env",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
 )
 _HARNESS_IGNORE_FILES: frozenset[str] = frozenset({"AGENTS.md", "CLAUDE.md", ".DS_Store"})
 _FORBIDDEN_CONFIG_FILENAMES: frozenset[str] = frozenset(
@@ -360,6 +373,10 @@ class SandboxHandle:
                 ".",
                 ":(exclude).agents",
                 ":(exclude).claude",
+                ":(exclude).codex",
+                ":(exclude).vibe",
+                ":(exclude).opencode",
+                ":(exclude).relay",
                 ":(exclude).skill-arena-env",
                 ":(exclude)AGENTS.md",
                 ":(exclude)CLAUDE.md",
@@ -486,9 +503,12 @@ class WorktreeSandboxPool:
         timeout_sec: int = 90,
         stdin_text: str | None = None,
         reap_sandbox_cwd: bool = False,
+        unset_env: tuple[str, ...] = (),
     ) -> BoundedCommandOutcome:
         """Execute a command in its own session, kill its group on timeout, and reap detached descendants."""
         merged_env = os.environ.copy()
+        for key in unset_env:
+            merged_env.pop(key, None)
         if env:
             merged_env.update(env)
         trial_token = merged_env.get("SKILL_ARENA_TRIAL_TOKEN") or f"sa_trial_{uuid.uuid4().hex}"

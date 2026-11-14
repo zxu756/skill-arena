@@ -180,13 +180,14 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _write_executable(
-        bin_dir / "opencode",
-        "#!/bin/sh\n"
-        "# Stub opencode CLI that makes no proxy API call\n"
-        "exit 0\n",
+    stub_claude = _write_executable(
+        bin_dir / "claude",
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "_ = sys.stdin.read()\n"
+        "print(json.dumps({'result': 'No-op stub.\\nSTATUS: success'}))\n",
     )
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
 
     from skill_arena.suites.builtin_tasks import load_builtin_suite
 
@@ -194,8 +195,8 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
     spec_file.write_text(json.dumps(load_builtin_suite()[0].to_dict()), encoding="utf-8")
     db_path = tmp_path / "real_gate.sqlite"
 
-    # 1. Without --allow-unisolated-host-home -> must fail in EN and ZH before running any trial
-    rc_no_en = main(
+    # 1. Unsupported CLI (not in agent-relay) -> must fail cleanly
+    rc_bad = main(
         [
             "--lang",
             "en",
@@ -204,6 +205,30 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
             "opencode",
             "--model",
             "stub-model",
+            "--suite",
+            str(spec_file),
+            "--reps",
+            "1",
+            "--db",
+            str(db_path),
+        ]
+    )
+    err_bad = capsys.readouterr()
+    assert rc_bad != 0
+    assert "agent-relay" in (err_bad.out + "\n" + err_bad.err)
+    assert not db_path.exists()
+
+    # 2. Explicit --host-home WITHOUT --allow-unisolated-host-home -> must fail in EN and ZH before running any trial
+    rc_no_en = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "stub-model",
+            "--host-home",
             "--suite",
             str(spec_file),
             "--reps",
@@ -223,9 +248,10 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
             "zh",
             "run",
             "--cli",
-            "opencode",
+            "claude",
             "--model",
             "stub-model",
+            "--host-home",
             "--suite",
             str(spec_file),
             "--reps",
@@ -237,9 +263,11 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
     err_zh = capsys.readouterr()
     assert rc_no_zh != 0
     assert "--allow-unisolated-host-home" in (err_zh.out + "\n" + err_zh.err)
-    assert "真实" in (err_zh.out + "\n" + err_zh.err)
+    assert "真实" in (err_zh.out + "\n" + err_zh.err) or "宿主" in (err_zh.out + "\n" + err_zh.err)
+    assert not db_path.exists()
 
-    # 2. With --allow-unisolated-host-home -> stub runs, records Unmetered / 未计量 (NEVER $0.0000 or 0 tok)
+    # 3. Default M1 run (isolated HOME via relay.sh) -> runs safely without --allow-unisolated-host-home,
+    #    and when no HTTP turn hits agent-xray, records Unmetered / 未计量 (NEVER $0.0000 or +0 tok)
     html_en_path = tmp_path / "unmetered-en.html"
     html_zh_path = tmp_path / "unmetered-zh.html"
     rc_ok = main(
@@ -248,10 +276,9 @@ def test_real_cli_requires_explicit_consent_flag_and_unmetered_renders_cleanly(
             "en",
             "run",
             "--cli",
-            "opencode",
+            "claude",
             "--model",
             "stub-model",
-            "--allow-unisolated-host-home",
             "--suite",
             str(spec_file),
             "--reps",
@@ -380,10 +407,11 @@ def test_cli_run_missing_pytest_fails_preflight_with_nonzero_exit(
         "#!/bin/sh\necho 'No module named pytest' >&2\nexit 1\n",
     )
     agent_ran_marker = tmp_path / "agent_ran.txt"
-    _write_executable(
-        bin_dir / "opencode",
+    stub_claude = _write_executable(
+        bin_dir / "claude",
         f"#!/bin/sh\necho ran > {str(agent_ran_marker)!r}\nexit 0\n",
     )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
     monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
 
@@ -414,10 +442,9 @@ def test_cli_run_missing_pytest_fails_preflight_with_nonzero_exit(
                 lang_code,
                 "run",
                 "--cli",
-                "opencode",
+                "claude",
                 "--model",
                 "stub-model",
-                "--allow-unisolated-host-home",
                 "--suite",
                 str(spec_path),
                 "--reps",
@@ -432,4 +459,115 @@ def test_cli_run_missing_pytest_fails_preflight_with_nonzero_exit(
         assert "pytest" in combined.lower()
         assert not agent_ran_marker.exists(), "Agent CLI must not run when pytest preflight fails!"
         assert not db_path.exists(), "Database must not be created when pytest preflight fails!"
+
+
+def test_equal_pass_rate_20_trials_each_cli_and_html_report_inconclusive_zh_and_en(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M1 Acceptance Row 5: Both arms use the exact same stub for 20 reps each -> report says 看不出差别 / Inconclusive."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # Deterministic counter file so both arms achieve the exact same 12/20 (60%) pass rate (or probabilistic parity)
+    state_dir = tmp_path / "stub_state"
+    state_dir.mkdir()
+    stub_claude = _write_executable(
+        bin_dir / "claude",
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "_ = sys.stdin.read()\n"
+        f"st = Path({str(state_dir)!r})\n"
+        "arm = os.environ.get('SKILL_ARENA_CONTENDER', 'x')\n"
+        "cnt_file = st / f'{arm}.cnt'\n"
+        "idx = int(cnt_file.read_text()) + 1 if cnt_file.exists() else 1\n"
+        "cnt_file.write_text(str(idx))\n"
+        "if idx % 2 == 1:\n"
+        "    Path('m.py').write_text('def f():\\n    return 2\\n', encoding='utf-8')\n"
+        "print(json.dumps({'result': 'Attempted fix.\\nSTATUS: success'}))\n",
+    )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    spec_path = tmp_path / "one_fast_task.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "task_id": "fast-parity-01",
+                "title": "Fast Parity Task",
+                "category": "refactor_test",
+                "prompt": "Update `m.py` so `f()` returns 2.",
+                "test_command": "python3 -m unittest tests/test_m.py",
+                "protected_test_paths": ["tests/test_m.py"],
+                "seed_files": {
+                    "m.py": "def f():\n    return 1\n",
+                    "tests/test_m.py": (
+                        "import unittest\nfrom m import f\n"
+                        "class T(unittest.TestCase):\n"
+                        "    def test_f(self):\n"
+                        "        self.assertEqual(f(), 2)\n"
+                    ),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cand_skill = tmp_path / "placebo-skill"
+    cand_skill.mkdir()
+    (cand_skill / "SKILL.md").write_text("# Placebo Skill\n", encoding="utf-8")
+
+    db_path = tmp_path / "parity20.sqlite"
+    html_zh_path = tmp_path / "parity20-zh.html"
+    html_en_path = tmp_path / "parity20-en.html"
+
+    rc_run = main(
+        [
+            "--lang",
+            "zh",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "stub-model",
+            "--skill",
+            str(cand_skill),
+            "--suite",
+            str(spec_path),
+            "--reps",
+            "20",
+            "--db",
+            str(db_path),
+            "--html-out",
+            str(html_zh_path),
+        ]
+    )
+    out_zh = capsys.readouterr().out
+    assert rc_run == 0
+    assert "看不出差别" in out_zh
+    assert "95%" in out_zh
+
+    rc_en = main(["--lang", "en", "compare", "--db", str(db_path)])
+    out_en = capsys.readouterr().out
+    assert rc_en == 0
+    assert "Inconclusive" in out_en
+    assert "95%" in out_en
+
+    rc_json = main(["compare", "--db", str(db_path), "--json"])
+    rep_json = json.loads(capsys.readouterr().out)
+    assert rc_json == 0
+    sc = rep_json["statistical_comparison"]
+    assert sc["control_trials"] == 20
+    assert sc["treatment_trials"] == 20
+    assert sc["verdict"] == "inconclusive"
+    assert sc["winner"] is None
+
+    assert main(["--lang", "en", "export-html", "--db", str(db_path), "--out", str(html_en_path)]) == 0
+    capsys.readouterr()
+
+    html_zh = html_zh_path.read_text(encoding="utf-8")
+    html_en = html_en_path.read_text(encoding="utf-8")
+    assert "看不出差别" in html_zh
+    assert "Inconclusive" in html_en
+    assert audit_html_craft(html_zh_path).passed
+    assert audit_html_craft(html_en_path).passed
 

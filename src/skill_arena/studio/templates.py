@@ -113,6 +113,23 @@ def render_arena_html(
     lift_pp = (t_pass1 - c_pass1) * 100.0
     lift_str = f"{lift_pp:+.1f} pp"
 
+    stat_comp: dict[str, Any] = dict(report.get("statistical_comparison") or {})
+    stat_verdict = str(stat_comp.get("verdict", "inconclusive"))
+    ci_low_pp = float(stat_comp.get("ci_low", 0.0)) * 100.0
+    ci_high_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
+    if stat_verdict == "treatment_better":
+        kpi1_tone_cls = "tone-win"
+        kpi1_val_str = lift_str
+        verdict_short = "实验组显著占优" if is_zh else "Treatment wins (95% CI > 0)"
+    elif stat_verdict == "control_better":
+        kpi1_tone_cls = "tone-ctrl"
+        kpi1_val_str = lift_str
+        verdict_short = "对照组显著占优" if is_zh else "Control wins (95% CI < 0)"
+    else:
+        kpi1_tone_cls = ""
+        kpi1_val_str = "看不出差别" if is_zh else "Inconclusive"
+        verdict_short = "看不出差别（不排定名次）" if is_zh else "Inconclusive (no rank)"
+
     is_simulated_exp = bool(report.get("is_simulated"))
     c_metered = bool(control.get("is_metered", True))
     t_metered = bool(treatment.get("is_metered", True))
@@ -133,18 +150,24 @@ def render_arena_html(
         row_metered = bool(row.get("is_metered", True))
         badge_cls = "arm-pill-treatment" if is_treat else "arm-pill-control"
         role_txt = ("实验组" if is_treat else "对照组") if is_zh else ("Treatment" if is_treat else "Control")
-        none_txt = (
-            "工作区未挂载（M0 仍可见宿主全局技能）"
-            if is_zh
-            else "None in workspace (host HOME visible in M0)"
-        )
+        row_iso = bool(row.get("isolate_home", True))
+        if row_iso:
+            none_txt = "0 个技能（独立隔离 HOME）" if is_zh else "0 skills (isolated HOME)"
+        else:
+            none_txt = (
+                "工作区未挂载（显式启用宿主 HOME）"
+                if is_zh
+                else "None in workspace (host HOME opted-in)"
+            )
         skills_txt = ", ".join(row.get("skills_mounted") or []) or none_txt
         cps_txt = _fmt_cost_cell(row.get("cost_per_success_usd"), row_metered, is_zh)
         ovh_txt = _fmt_ovh_cell(row.get("context_overhead_delta_tokens"), row_metered, is_zh)
         elo_val = int(row.get("elo_rating", 1500))
         integrity_pct = float(row.get("anti_cheat_integrity_rate", 1.0))
         int_cls = "status-ok" if integrity_pct >= 0.999 else "status-fail"
-        arm_lbl = _localize_arm_label(_clean_prose(str(row.get("label", ""))), render_lang)
+        raw_arm_lbl = _localize_arm_label(_clean_prose(str(row.get("label", ""))), render_lang)
+        row_rank = row.get("rank")
+        arm_lbl = f"#{row_rank} {raw_arm_lbl}" if row_rank in (1, 2) else raw_arm_lbl
 
         lb_rows_html.append(
             f"""
@@ -272,11 +295,11 @@ def render_arena_html(
         else "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders"
     )
 
-    kpi1_lbl = "实验组 Pass@1 净提升" if is_zh else "Treatment Pass@1 lift"
+    kpi1_lbl = "统计结论与 Pass@1 差值" if is_zh else "Statistical verdict & Pass@1 lift"
     kpi1_foot = (
-        f"对照组 {_fmt_pct(c_pass1)} 对比 实验组 {_fmt_pct(t_pass1)}"
+        f"差值 {lift_pp:+.1f} pp · 95% 区间 [{ci_low_pp:+.1f}, {ci_high_pp:+.1f}] pp · {verdict_short}"
         if is_zh
-        else f"Control {_fmt_pct(c_pass1)} vs Treatment {_fmt_pct(t_pass1)}"
+        else f"Delta {lift_pp:+.1f} pp · 95% CI [{ci_low_pp:+.1f}, {ci_high_pp:+.1f}] pp · {verdict_short}"
     )
     c_cps_disp = _fmt_cost_cell(c_cps, c_metered, is_zh)
     kpi2_lbl = "单次成功真实摊销成本" if is_zh else "True cost per success"
@@ -300,9 +323,9 @@ def render_arena_html(
 
     sb_heading = "参赛智能体 A/B 排行榜" if is_zh else "Contender A/B scoreboard"
     sb_note = (
-        f"成对胜率换算的 Elo（双组）与 Pass^{k_reps}（单任务需连续 {k_reps}/{k_reps} 次全绿通过）"
+        f"结论：{verdict_short} · 成对胜率换算的 Elo（双组）与 Pass^{k_reps}（单任务需连续 {k_reps}/{k_reps} 次全绿通过）"
         if is_zh
-        else f"Win-Rate Derived Elo (2-arm) & Pass^{k_reps} ({k_reps}/{k_reps} consecutive clean passes per task)"
+        else f"Verdict: {verdict_short} · Win-Rate Derived Elo (2-arm) & Pass^{k_reps} ({k_reps}/{k_reps} consecutive clean passes per task)"
     )
     th_arm = "参赛组别" if is_zh else "Contender arm"
     th_skill = "挂载技能" if is_zh else "Mounted SKILL.md"
@@ -911,7 +934,7 @@ def render_arena_html(
     <section class="kpi-strip" aria-label="Headline experiment metrics">
       <div class="kpi-cell">
         <div class="kpi-label" id="kpi1-lbl">{html.escape(kpi1_lbl)}</div>
-        <div class="kpi-val mono tone-win" id="kpi1-val">{html.escape(lift_str)}</div>
+        <div class="kpi-val mono {kpi1_tone_cls}" id="kpi1-val">{html.escape(kpi1_val_str)}</div>
         <div class="kpi-foot mono" id="kpi1-foot">{html.escape(kpi1_foot)}</div>
       </div>
       <div class="kpi-cell">
@@ -1047,7 +1070,7 @@ def render_arena_html(
           themeToDark: "Switch telemetry theme",
           themeToLight: "Light newsprint theme",
           graderNote: "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders",
-          kpi1Lbl: "Treatment Pass@1 lift",
+          kpi1Lbl: "Statistical verdict & Pass@1 lift",
           kpi2Lbl: "True cost per success",
           kpi3Lbl: "Turn-1 Context Tax",
           kpi3Foot: "Mean Turn-1 input token delta (treatment minus baseline)",
@@ -1064,7 +1087,12 @@ def render_arena_html(
           thInt: "Test integrity",
           roleControl: "Control",
           roleTreatment: "Treatment",
-          noneStripped: "None in workspace (host HOME visible in M0)",
+          noneIsolated: "0 skills (isolated HOME)",
+          noneHostOptIn: "None in workspace (host HOME opted-in)",
+          inconclusiveWord: "Inconclusive",
+          inconclusiveShort: "Inconclusive (no rank)",
+          treatWinsShort: "Treatment wins (95% CI > 0)",
+          ctrlWinsShort: "Control wins (95% CI < 0)",
           zeroBaseline: "0 tok (baseline)",
           unmetered: "Unmetered",
           matHeading: "Task-by-task worktree telemetry matrix",
@@ -1116,7 +1144,7 @@ def render_arena_html(
           themeToDark: "深色遥测主题",
           themeToLight: "浅色报刊主题",
           graderNote: "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验",
-          kpi1Lbl: "实验组 Pass@1 净提升",
+          kpi1Lbl: "统计结论与 Pass@1 差值",
           kpi2Lbl: "单次成功真实摊销成本",
           kpi3Lbl: "首轮上下文税",
           kpi3Foot: "实验组与对照组首轮输入 Token 均值之差",
@@ -1133,7 +1161,12 @@ def render_arena_html(
           thInt: "防作弊完整性",
           roleControl: "对照组",
           roleTreatment: "实验组",
-          noneStripped: "工作区未挂载（M0 仍可见宿主全局技能）",
+          noneIsolated: "0 个技能（独立隔离 HOME）",
+          noneHostOptIn: "工作区未挂载（显式启用宿主 HOME）",
+          inconclusiveWord: "看不出差别",
+          inconclusiveShort: "看不出差别（不排定名次）",
+          treatWinsShort: "实验组显著占优",
+          ctrlWinsShort: "对照组显著占优",
           zeroBaseline: "0 tok（基线）",
           unmetered: "未计量",
           matHeading: "逐任务 Worktree 沙盒遥测矩阵",
@@ -1355,11 +1388,32 @@ def render_arena_html(
 
         const cPass1 = Number(controlMeta.pass_at_1 || 0);
         const tPass1 = Number(treatMeta.pass_at_1 || 0);
+        const liftPp = (tPass1 - cPass1) * 100;
+        const liftStr = (liftPp >= 0 ? "+" : "") + liftPp.toFixed(1) + " pp";
+        const sc = report.statistical_comparison || {{}};
+        const sVerdict = sc.verdict || "inconclusive";
+        const ciLowPp = (Number(sc.ci_low || 0) * 100);
+        const ciHighPp = (Number(sc.ci_high || 0) * 100);
+        const ciRangeTxt = "[" + (ciLowPp >= 0 ? "+" : "") + ciLowPp.toFixed(1) + ", " + (ciHighPp >= 0 ? "+" : "") + ciHighPp.toFixed(1) + "] pp";
+        const kpi1ValEl = document.getElementById("kpi1-val");
+        kpi1ValEl.classList.remove("tone-win", "tone-ctrl");
+        let verdictShort = t.inconclusiveShort;
+        if (sVerdict === "treatment_better") {{
+          kpi1ValEl.classList.add("tone-win");
+          kpi1ValEl.textContent = liftStr;
+          verdictShort = t.treatWinsShort;
+        }} else if (sVerdict === "control_better") {{
+          kpi1ValEl.classList.add("tone-ctrl");
+          kpi1ValEl.textContent = liftStr;
+          verdictShort = t.ctrlWinsShort;
+        }} else {{
+          kpi1ValEl.textContent = t.inconclusiveWord;
+        }}
         document.getElementById("kpi1-lbl").textContent = t.kpi1Lbl;
         document.getElementById("kpi1-foot").textContent =
           currentLang === "zh"
-            ? ("对照组 " + fmtPct(cPass1) + " 对比 实验组 " + fmtPct(tPass1))
-            : ("Control " + fmtPct(cPass1) + " vs Treatment " + fmtPct(tPass1));
+            ? ("差值 " + liftStr + " · 95% 区间 " + ciRangeTxt + " · " + verdictShort)
+            : ("Delta " + liftStr + " · 95% CI " + ciRangeTxt + " · " + verdictShort);
 
         const cMetered = controlMeta.is_metered !== false;
         const tMetered = treatMeta.is_metered !== false;
@@ -1379,8 +1433,8 @@ def render_arena_html(
         document.getElementById("sb-heading").textContent = t.sbHeading;
         document.getElementById("sb-note").textContent =
           currentLang === "zh"
-            ? ("成对胜率换算的 Elo（双组）与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
-            : ("Win-Rate Derived Elo (2-arm) & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
+            ? ("结论：" + verdictShort + " · 成对胜率换算的 Elo（双组）与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
+            : ("Verdict: " + verdictShort + " · Win-Rate Derived Elo (2-arm) & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
 
         document.getElementById("th-arm").textContent = t.thArm;
         document.getElementById("th-skill").textContent = t.thSkill;
@@ -1398,20 +1452,24 @@ def render_arena_html(
           const rowMetered = row.is_metered !== false;
           const badgeCls = isTreat ? "arm-pill-treatment" : "arm-pill-control";
           const roleTxt = isTreat ? t.roleTreatment : t.roleControl;
+          const rowIso = row.isolate_home !== false;
           const skillsTxt = (row.skills_mounted && row.skills_mounted.length)
             ? row.skills_mounted.join(", ")
-            : t.noneStripped;
+            : (rowIso ? t.noneIsolated : t.noneHostOptIn);
           const cpsTxt = fmtCostCell(row.cost_per_success_usd, rowMetered);
           const ovhTxt = fmtOvhCell(row.context_overhead_delta_tokens, rowMetered, false);
           const eloVal = Number(row.elo_rating || 1500);
           const intPct = Number(row.anti_cheat_integrity_rate ?? 1.0);
           const intCls = intPct >= 0.999 ? "status-ok" : "status-fail";
+          const dispLbl = (row.rank === 1 || row.rank === 2)
+            ? ("#" + row.rank + " " + localizeArmLabel(row.label))
+            : localizeArmLabel(row.label);
           return (
             "<tr>" +
               "<td><div class='arm-cell'>" +
                 "<span class='arm-pill " + badgeCls + "'>" + esc(roleTxt) + "</span>" +
                 "<div>" +
-                  "<div class='arm-name'>" + esc(localizeArmLabel(row.label)) + "</div>" +
+                  "<div class='arm-name'>" + esc(dispLbl) + "</div>" +
                   "<div class='arm-meta'>" + esc(row.cli) + " · " + esc(row.model) + "</div>" +
                 "</div>" +
               "</div></td>" +

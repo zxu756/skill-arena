@@ -208,12 +208,10 @@ for doc_name, cmds, work_sub in (
         elif "skill-arena run" in cmd and "--cli claude" in cmd:
             print(
                 f"  SKIPPED: {cmd} — invokes real paid external agent CLI (claude) with placeholder "
-                "/path/to/candidate-skill; prohibited in offline M0 acceptance"
+                "/path/to/candidate-skill; prohibited in offline acceptance"
             )
-            # Also verify consent gate blocks running real CLI when --allow-unisolated-host-home is omitted
-            gated_cmd = cmd.replace("--allow-unisolated-host-home", "").replace(
-                "/path/to/candidate-skill", str(workdir)
-            )
+            # Also verify consent gate blocks running in host HOME (--host-home) when --allow-unisolated-host-home is omitted
+            gated_cmd = cmd.replace("/path/to/candidate-skill", str(workdir)) + " --host-home"
             rc_gate, out_gate = run_cmd(gated_cmd, workdir)
             assert rc_gate != 0 and "--allow-unisolated-host-home" in out_gate, (rc_gate, out_gate)
 
@@ -264,7 +262,7 @@ for doc_name, cmds, work_sub in (
                 executed_scopes.add(cmd)
                 print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified pytest passed")
 
-        elif cmd == "./Scripts/test.sh milestone 0":
+        elif cmd in ("./Scripts/test.sh milestone 0", "./Scripts/test.sh milestone 1"):
             print(
                 f"  SKIPPED: {cmd} — top-level milestone orchestrator that invokes readme-commands.sh itself "
                 "(skipped to prevent recursive self-invocation)"

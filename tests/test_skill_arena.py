@@ -15,7 +15,7 @@ from skill_arena.graders.deterministic import evaluate_sandbox
 from skill_arena.i18n import resolve_html_lang_mode, resolve_lang
 from skill_arena.models import ContenderConfig
 from skill_arena.runners.harness_driver import HarnessDriver
-from skill_arena.runners.wire_tap_proxy import LoopbackWireTapProxy, _extract_usage_from_sse
+from skill_arena.runners.xray_bridge import XRayMeteringBridge
 from skill_arena.sandbox.skill_injector import SkillInjector
 from skill_arena.sandbox.worktree_pool import WorktreeSandboxPool
 from skill_arena.store.arena_db import ArenaDatabase
@@ -94,50 +94,92 @@ def test_skill_injector_mounts_skill_tree_and_estimates_tokens(tmp_path: Path) -
 
 
 def test_wire_tap_proxy_meters_json_and_sse_usage() -> None:
-    def synth(path: str, body: dict) -> tuple[int, dict]:
-        return (
-            200,
-            {
-                "model": "claude-sonnet-4-5",
-                "usage": {
-                    "input_tokens": 1500,
-                    "cache_read_input_tokens": 500,
-                    "output_tokens": 250,
-                },
-            },
-        )
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
 
-    proxy = LoopbackWireTapProxy(synthetic_responder=synth)
-    url = proxy.start()
+    class Upstream(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args: object) -> None:
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            n = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(n) if n > 0 else b"{}"
+            req_obj = json.loads(raw.decode("utf-8"))
+            if req_obj.get("stream"):
+                sse_body = (
+                    b'data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":900,"cache_read_input_tokens":100,"output_tokens":0}}}\n\n'
+                    b'data: {"type":"message_delta","usage":{"output_tokens":180}}\n\n'
+                    b"data: [DONE]\n\n"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(sse_body)
+            else:
+                body = json.dumps(
+                    {
+                        "model": "claude-sonnet-4-5",
+                        "usage": {
+                            "input_tokens": 1500,
+                            "cache_read_input_tokens": 500,
+                            "output_tokens": 250,
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+    up = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
     try:
-        req = urllib.request.Request(
-            f"{url}/v1/messages",
-            data=b'{"model":"claude-sonnet-4-5"}',
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            assert resp.status == 200
-        ledger, turns = proxy.summarize(injected_skill_tokens_est=320)
-        assert ledger.turns == 1
-        assert ledger.first_turn_prompt_tokens == 2000
-        assert ledger.cached_prompt_tokens == 500
-        assert ledger.completion_tokens == 250
-        assert ledger.total_cost_usd > 0
-        assert len(turns) == 1
-    finally:
-        proxy.stop()
+        up_url = f"http://127.0.0.1:{up.server_address[1]}"
+        bridge = XRayMeteringBridge(anthropic_upstream=up_url, openai_upstream=up_url)
+        bridge.start()
+        try:
+            req = urllib.request.Request(
+                f"{bridge.anthropic_base_url}/v1/messages",
+                data=b'{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                assert resp.status == 200
+                resp.read()
 
-    sse_sample = (
-        b'data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":900,"cache_read_input_tokens":100,"output_tokens":0}}}\n\n'
-        b'data: {"type":"message_delta","usage":{"output_tokens":180}}\n\n'
-        b"data: [DONE]\n\n"
-    )
-    model, p_in, p_cache, p_out = _extract_usage_from_sse(sse_sample, "claude-sonnet-4-5")
-    assert model == "claude-sonnet-4-5"
-    assert p_in == 1000
-    assert p_cache == 100
-    assert p_out == 180
+            req_sse = urllib.request.Request(
+                f"{bridge.anthropic_base_url}/v1/messages",
+                data=b'{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi2"}]}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req_sse, timeout=5) as resp_sse:
+                assert resp_sse.status == 200
+                resp_sse.read()
+
+            ledger, turns = bridge.summarize(injected_skill_tokens_est=320)
+            assert ledger.turns == 2
+            assert ledger.first_turn_prompt_tokens == 2000
+            assert ledger.uncached_input_tokens == 2400
+            assert ledger.cached_prompt_tokens == 600
+            assert ledger.total_prompt_tokens == 3000
+            assert ledger.completion_tokens == 430
+            assert ledger.total_cost_usd is not None and ledger.total_cost_usd > 0
+            assert len(turns) == 2
+            assert turns[1].prompt_tokens == 1000
+            assert turns[1].cached_tokens == 100
+            assert turns[1].completion_tokens == 180
+        finally:
+            bridge.stop()
+    finally:
+        up.shutdown()
+        up.server_close()
 
 
 def test_git_commit_extractor_and_detached_worktree_execution(tmp_path: Path) -> None:

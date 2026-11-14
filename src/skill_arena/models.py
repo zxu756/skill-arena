@@ -57,12 +57,14 @@ class ContenderConfig:
     contender_id: str
     label: str
     role: str = "control"  # control | treatment
-    cli: str = "claude"  # claude | codex | opencode | vibe | agy | simulate
+    cli: str = "claude"  # claude | codex | vibe | agy | simulate
     model: str = "synthetic-sim-model"
     skill_paths: list[str] = field(default_factory=list)
     agents_md_snippet: str | None = None
     strip_default_skills: bool = True
     extra_args: list[str] = field(default_factory=list)
+    isolate_home: bool = True
+    auth_copy_mode: bool = False
     allow_unisolated_host_home: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +82,8 @@ class ContenderConfig:
             agents_md_snippet=payload.get("agents_md_snippet"),
             strip_default_skills=bool(payload.get("strip_default_skills", True)),
             extra_args=list(payload.get("extra_args", [])),
+            isolate_home=bool(payload.get("isolate_home", True)),
+            auth_copy_mode=bool(payload.get("auth_copy_mode", False)),
             allow_unisolated_host_home=bool(payload.get("allow_unisolated_host_home", False)),
         )
 
@@ -120,20 +124,25 @@ class TrajectoryStep:
 
 @dataclass(slots=True)
 class TokenUsageLedger:
-    """Wire-tap proxy token, latency, and USD cost ledger for one trial."""
+    """agent-xray proxy token, TTFT, latency, USD cost, and agent-relay step ledger for one trial."""
 
     turns: int = 0
+    uncached_input_tokens: int | None = None
     first_turn_prompt_tokens: int | None = None
     total_prompt_tokens: int | None = None
     cached_prompt_tokens: int | None = None
     completion_tokens: int | None = None
-    ttft_ms: int = 0
+    ttft_ms: float = 0.0
     total_latency_ms: int = 0
     total_cost_usd: float | None = None
     injected_skill_tokens_est: int = 0
     is_metered: bool = False
     usage_status: str = "unmetered"
     is_simulated: bool = False
+    relay_status: str | None = None
+    relay_cost_usd: float | None = None
+    relay_tokens: int | None = None
+    isolated_home_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -148,6 +157,11 @@ class TokenUsageLedger:
         default_status = "simulated" if is_sim else ("metered" if metered else "unmetered")
         return cls(
             turns=int(payload.get("turns", 0)),
+            uncached_input_tokens=(
+                int(payload["uncached_input_tokens"])
+                if metered and payload.get("uncached_input_tokens") is not None
+                else None
+            ),
             first_turn_prompt_tokens=(
                 int(payload["first_turn_prompt_tokens"])
                 if metered and payload.get("first_turn_prompt_tokens") is not None
@@ -168,17 +182,21 @@ class TokenUsageLedger:
                 if metered and payload.get("completion_tokens") is not None
                 else None
             ),
-            ttft_ms=int(payload.get("ttft_ms", 0)),
+            ttft_ms=round(float(payload.get("ttft_ms", 0.0)), 3),
             total_latency_ms=int(payload.get("total_latency_ms", 0)),
             total_cost_usd=(
                 float(payload["total_cost_usd"])
-                if metered and payload.get("total_cost_usd") is not None
+                if payload.get("total_cost_usd") is not None and (metered or payload.get("relay_cost_usd") is not None)
                 else None
             ),
             injected_skill_tokens_est=int(payload.get("injected_skill_tokens_est", 0)),
             is_metered=metered,
             usage_status=str(payload.get("usage_status", default_status)),
             is_simulated=is_sim,
+            relay_status=str(payload["relay_status"]) if payload.get("relay_status") is not None else None,
+            relay_cost_usd=float(payload["relay_cost_usd"]) if payload.get("relay_cost_usd") is not None else None,
+            relay_tokens=int(payload["relay_tokens"]) if payload.get("relay_tokens") is not None else None,
+            isolated_home_used=bool(payload.get("isolated_home_used", False)),
         )
 
 
@@ -294,6 +312,8 @@ class LeaderboardSummary:
     median_latency_ms: int
     anti_cheat_integrity_rate: float
     elo_rating: int = 1500
+    rank: int | None = None
+    isolate_home: bool = True
     is_metered: bool = False
     usage_status: str = "unmetered"
     is_simulated: bool = False
