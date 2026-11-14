@@ -6,14 +6,42 @@ import os
 from pathlib import Path
 import stat
 import sys
+import threading
 import time
 
 import pytest
 
-from skill_arena.models import ContenderConfig
+from skill_arena.models import ContenderConfig, TrialResult
 from skill_arena.runners.harness_driver import HarnessDriver
 from skill_arena.sandbox.worktree_pool import WorktreeSandboxPool
 from skill_arena.suites.builtin_tasks import load_builtin_suite
+
+
+class _PidFileGatedTime:
+    """Test clock proxy that pauses `worktree_pool.time.monotonic()` until `pid_file` appears on disk."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._base = time.monotonic()
+        self._released_mono: float | None = None
+
+    def release_countdown(self) -> None:
+        with self._lock:
+            if self._released_mono is None:
+                self._released_mono = time.monotonic()
+
+    def monotonic(self) -> float:
+        now = time.monotonic()
+        with self._lock:
+            if self._released_mono is None:
+                return self._base
+            return self._base + (now - self._released_mono)
+
+    def sleep(self, secs: float) -> None:
+        time.sleep(secs)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(time, name)
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -61,28 +89,62 @@ def test_real_cli_requires_explicit_unisolated_home_consent(tmp_path: Path, monk
     pool.close()
 
 
-def test_run_bounded_command_kills_timed_out_leader_and_process_group(tmp_path: Path) -> None:
+def test_run_bounded_command_kills_timed_out_leader_and_process_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pid_file = tmp_path / "leader.pid"
     pid_tmp = tmp_path / "leader.pid.tmp"
+    # Simulate 1.2s startup delay exceeding timeout_sec=1 to prove countdown starts only after pid_file appears
     code = (
         "import os, time\n"
         "from pathlib import Path\n"
+        "time.sleep(1.2)\n"
         f"Path({str(pid_tmp)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
         f"os.replace({str(pid_tmp)!r}, {str(pid_file)!r})\n"
         "time.sleep(30)\n"
     )
+    gated_time = _PidFileGatedTime()
+    monkeypatch.setattr("skill_arena.sandbox.worktree_pool.time", gated_time)
+
+    box: dict[str, object] = {}
+
+    def _runner() -> None:
+        try:
+            box["out"] = WorktreeSandboxPool.run_bounded_command(
+                [sys.executable, "-c", code],
+                cwd=tmp_path,
+                timeout_sec=1,
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced in main thread
+            box["err"] = exc
+
+    worker = threading.Thread(target=_runner, daemon=True)
     try:
-        rc, _, _, timed_out = WorktreeSandboxPool.run_bounded_command(
-            [sys.executable, "-c", code],
-            cwd=tmp_path,
-            timeout_sec=3,
-        )
+        worker.start()
+        startup_deadline = time.perf_counter() + 15.0
+        while not pid_file.is_file() and worker.is_alive() and time.perf_counter() < startup_deadline:
+            time.sleep(0.01)
+
+        assert pid_file.is_file(), "Child leader did not write pid_file before exiting"
+        gated_time.release_countdown()
+        t0 = time.perf_counter()
+        worker.join(timeout=10.0)
+        elapsed = time.perf_counter() - t0
+
+        assert not worker.is_alive(), "run_bounded_command hung past post-pid_file join window"
+        if "err" in box:
+            raise box["err"]  # type: ignore[misc]
+        rc, _, _, timed_out = box["out"]  # type: ignore[misc]
+        assert elapsed < 6.0, f"Timed-out command took {elapsed:.2f}s after pid_file appeared (expected < 6.0s)"
         assert timed_out is True
         assert rc == 124
-        assert pid_file.is_file()
         leader_pid = int(pid_file.read_text(encoding="utf-8").strip())
         assert not _pid_is_alive(leader_pid), f"Timed-out leader PID {leader_pid} survived after timeout!"
     finally:
+        gated_time.release_countdown()
+        if worker.is_alive():
+            worker.join(timeout=2.0)
         if pid_file.is_file():
             raw = pid_file.read_text(encoding="utf-8").strip()
             if raw.isdigit():
@@ -101,7 +163,7 @@ def test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper(
     pid_file = tmp_path / "sleeper.pid"
     pid_tmp = tmp_path / "sleeper.pid.tmp"
     task = load_builtin_suite()[0]
-    task.timeout_sec = 3
+    task.timeout_sec = 2
     ref_code = task.reference_solution_files["rate_limiter.py"]
 
     _make_stub_cli(
@@ -120,6 +182,9 @@ def test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper(
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
 
+    gated_time = _PidFileGatedTime()
+    monkeypatch.setattr("skill_arena.sandbox.worktree_pool.time", gated_time)
+
     pool = WorktreeSandboxPool(tmp_path / "pool")
     driver = HarnessDriver(pool, allow_unisolated_host_home=True)
     contender = ContenderConfig(
@@ -129,20 +194,44 @@ def test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper(
         cli="opencode",
         model="stub-model",
     )
-    t0 = time.perf_counter()
+    trial_box: dict[str, object] = {}
+
+    def _run_trial_worker() -> None:
+        try:
+            trial_box["result"] = driver.run_trial("exp_timeout", task, contender, rep_index=1)
+        except BaseException as exc:  # pragma: no cover - surfaced in main thread
+            trial_box["err"] = exc
+
+    worker = threading.Thread(target=_run_trial_worker, daemon=True)
     try:
-        result = driver.run_trial("exp_timeout", task, contender, rep_index=1)
+        worker.start()
+        startup_deadline = time.perf_counter() + 15.0
+        while not pid_file.is_file() and worker.is_alive() and time.perf_counter() < startup_deadline:
+            time.sleep(0.01)
+
+        assert pid_file.is_file(), "Stub agent did not write sleeper.pid before exiting"
+        gated_time.release_countdown()
+        t0 = time.perf_counter()
+        worker.join(timeout=15.0)
         elapsed = time.perf_counter() - t0
 
-        assert elapsed < 15.0, f"Timed-out trial took {elapsed:.2f}s instead of aborting promptly"
-        assert pid_file.is_file()
+        assert not worker.is_alive(), "run_trial hung past post-pid_file join window"
+        if "err" in trial_box:
+            raise trial_box["err"]  # type: ignore[misc]
+        result = trial_box["result"]
+        assert isinstance(result, TrialResult)
+
+        assert elapsed < 6.0, f"Timed-out trial took {elapsed:.2f}s after pid_file appeared instead of < 6.0s"
         tracked_pids = [int(x) for x in pid_file.read_text(encoding="utf-8").strip().split(",") if x]
         assert len(tracked_pids) == 2
         for pid in tracked_pids:
             assert not _pid_is_alive(pid), f"Timed-out process PID {pid} was not killed!"
         assert not result.passed, "Timed-out trial MUST fail even if passing code was written before timeout"
-        assert "timeout" in result.verdict.summary.lower()
+        assert "agent timeout" in result.verdict.summary.lower()
     finally:
+        gated_time.release_countdown()
+        if worker.is_alive():
+            worker.join(timeout=2.0)
         pool.close()
         if pid_file.is_file():
             for x in pid_file.read_text(encoding="utf-8").strip().split(","):
@@ -299,3 +388,119 @@ def test_detached_double_fork_non_sip_daemon_is_killed_and_fails_trial(
                     os.kill(int(raw), 9)
                 except OSError:
                     pass
+
+
+def test_detached_env_scrubbed_daemon_using_sandbox_dir_is_killed_and_fails_trial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K16: Detached double-fork daemon that scrubs env via execve(..., {}) is still caught if cwd or open FD is in sandbox."""
+    task = load_builtin_suite()[0]
+    task.timeout_sec = 8
+    ref_code = task.reference_solution_files["rate_limiter.py"]
+    monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
+
+    scenarios = [
+        (
+            "open_fd_with_chdir_root",
+            (
+                "        for fd in range(3, 256):\n"
+                "            try:\n"
+                "                os.close(fd)\n"
+                "            except OSError:\n"
+                "                pass\n"
+                "        keep_fd = os.open('rate_limiter.py', os.O_RDONLY)\n"
+                "        os.set_inheritable(keep_fd, True)\n"
+                "        os.chdir('/')\n"
+                "        dn = os.open(os.devnull, os.O_RDWR)\n"
+                "        os.dup2(dn, 0)\n"
+                "        os.dup2(dn, 1)\n"
+                "        os.dup2(dn, 2)\n"
+                "        if dn > 2 and dn != keep_fd:\n"
+                "            os.close(dn)\n"
+            ),
+        ),
+        (
+            "stay_in_sandbox_cwd",
+            (
+                "        for fd in range(3, 256):\n"
+                "            try:\n"
+                "                os.close(fd)\n"
+                "            except OSError:\n"
+                "                pass\n"
+                "        dn = os.open(os.devnull, os.O_RDWR)\n"
+                "        os.dup2(dn, 0)\n"
+                "        os.dup2(dn, 1)\n"
+                "        os.dup2(dn, 2)\n"
+                "        if dn > 2:\n"
+                "            os.close(dn)\n"
+            ),
+        ),
+    ]
+
+    for idx, (label, child_setup) in enumerate(scenarios, start=1):
+        sub_dir = tmp_path / label
+        bin_dir = sub_dir / "bin"
+        bin_dir.mkdir(parents=True)
+        daemon_pid_file = sub_dir / "daemon.pid"
+        daemon_pid_tmp = sub_dir / "daemon.pid.tmp"
+
+        _make_stub_cli(
+            bin_dir,
+            "opencode",
+            (
+                "import os, sys, time\n"
+                "from pathlib import Path\n"
+                f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
+                "pid1 = os.fork()\n"
+                "if pid1 == 0:\n"
+                "    os.setsid()\n"
+                "    pid2 = os.fork()\n"
+                "    if pid2 == 0:\n"
+                f"{child_setup}"
+                f"        Path({str(daemon_pid_tmp)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
+                f"        os.replace({str(daemon_pid_tmp)!r}, {str(daemon_pid_file)!r})\n"
+                "        os.execve(sys.executable, [sys.executable, '-c', 'import time; time.sleep(30)'], {})\n"
+                "    os._exit(0)\n"
+                "os.waitpid(pid1, 0)\n"
+                "for _ in range(50):\n"
+                f"    if Path({str(daemon_pid_file)!r}).is_file():\n"
+                "        break\n"
+                "    time.sleep(0.01)\n"
+            ),
+        )
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+        pool = WorktreeSandboxPool(sub_dir / "pool")
+        driver = HarnessDriver(pool, allow_unisolated_host_home=True)
+        contender = ContenderConfig(
+            contender_id="ctrl",
+            label=f"Env-Scrub Stub ({label})",
+            role="control",
+            cli="opencode",
+            model="stub-model",
+        )
+        try:
+            result = driver.run_trial(f"exp_k16_{idx}", task, contender, rep_index=1)
+            assert daemon_pid_file.is_file(), f"[{label}] Detached daemon did not record its PID"
+            daemon_pid = int(daemon_pid_file.read_text(encoding="utf-8").strip())
+
+            assert not _pid_is_alive(daemon_pid), (
+                f"[{label}] Escaped env-scrubbed daemon PID {daemon_pid} survived trial cleanup!"
+            )
+            assert not result.passed, (
+                f"[{label}] Trial leaving env-scrubbed background daemon MUST fail even with passing fix!"
+            )
+            recorded_pids = {int(item["pid"]) for item in result.verdict.leaked_processes}
+            assert daemon_pid in recorded_pids, (
+                f"[{label}] Expected daemon PID {daemon_pid} in {result.verdict.leaked_processes}"
+            )
+            assert "leaked" in result.verdict.summary.lower()
+        finally:
+            pool.close()
+            if daemon_pid_file.is_file():
+                raw = daemon_pid_file.read_text(encoding="utf-8").strip()
+                if raw.isdigit():
+                    try:
+                        os.kill(int(raw), 9)
+                    except OSError:
+                        pass

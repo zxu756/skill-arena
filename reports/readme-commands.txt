@@ -39,5 +39,5 @@ SkillArena README.md & README.zh-CN.md Parsed Command Replay (W3)
   SKIPPED: ./Scripts/test.sh milestone 0 — top-level milestone orchestrator that invokes readme-commands.sh itself (skipped to prevent recursive self-invocation)
 
 ================================================================
-RESULT: ALL PARSED README COMMANDS VERIFIED (PARITY + ASSERTIONS)
+RESULT: README COMMAND REPLAY SUMMARY: 18 passed, 12 skipped, 0 failed (out of 30 parsed commands)
 ================================================================

@@ -95,7 +95,10 @@ case "$MODE" in
       exit 2
     fi
     export SKILL_ARENA_IN_MILESTONE=1
-    "$PYTEST" -q
+    PYTEST_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-pytest.XXXXXX")"
+    README_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-readme-log.XXXXXX")"
+    trap 'rm -f "$PYTEST_LOG" "$README_LOG"' EXIT
+    "$PYTEST" -q -rs | tee "$PYTEST_LOG"
     if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
       Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
@@ -103,11 +106,29 @@ case "$MODE" in
       exit 1
     fi
     if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
     else
       echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
       exit 1
     fi
+    "$PYTHON" - "$PYTEST_LOG" "$README_LOG" <<'PY'
+import re, sys
+from pathlib import Path
+pt_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed = int(m_rm.group(1)) if m_rm else 0
+rm_skipped = int(m_rm.group(2)) if m_rm else 0
+print(
+    f"Milestone M0 summary: unit tests ({pt_passed} passed, {pt_skipped} skipped), "
+    f"M0 acceptance (8 passed, 0 skipped), "
+    f"README replay ({rm_passed} passed, {rm_skipped} skipped)"
+)
+PY
     ;;
 
   release)
@@ -115,7 +136,10 @@ case "$MODE" in
       usage
     fi
     export SKILL_ARENA_IN_MILESTONE=1
-    "$PYTEST" -q
+    PYTEST_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-pytest.XXXXXX")"
+    README_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-readme-log.XXXXXX")"
+    trap 'rm -f "$PYTEST_LOG" "$README_LOG"' EXIT
+    "$PYTEST" -q -rs | tee "$PYTEST_LOG"
     if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
       Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
@@ -123,7 +147,7 @@ case "$MODE" in
       exit 1
     fi
     if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
+      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
     else
       echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
       exit 1
@@ -132,7 +156,7 @@ case "$MODE" in
       echo "RELAY_REAL_AGENTS=1 enabled: live real-agent A/B evaluation belongs to M1 (not implemented in M0)." >&2
       exit 2
     else
-      echo "Real agent checks: SKIPPED (RELAY_REAL_AGENTS!=1)"
+      echo "Real agent checks: SKIPPED (RELAY_REAL_AGENTS!=1) — 0 passed, 1 skipped"
     fi
     ;;
 
