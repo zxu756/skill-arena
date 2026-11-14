@@ -190,6 +190,7 @@ class GraderVerdict:
     exit_code: int
     anti_cheat_clean: bool
     tampered_test_files: list[str] = field(default_factory=list)
+    leaked_processes: list[dict[str, Any]] = field(default_factory=list)
     diff_lines_added: int = 0
     diff_lines_removed: int = 0
     diff_bloat_ratio: float = 0.0
@@ -208,6 +209,7 @@ class GraderVerdict:
             exit_code=int(payload.get("exit_code", 1)),
             anti_cheat_clean=bool(payload.get("anti_cheat_clean", True)),
             tampered_test_files=list(payload.get("tampered_test_files", [])),
+            leaked_processes=[dict(item) for item in payload.get("leaked_processes", [])],
             diff_lines_added=int(payload.get("diff_lines_added", 0)),
             diff_lines_removed=int(payload.get("diff_lines_removed", 0)),
             diff_bloat_ratio=float(payload.get("diff_bloat_ratio", 0.0)),
@@ -241,6 +243,10 @@ class TrialResult:
     finished_at: str
     is_simulated: bool = False
 
+    @property
+    def leaked_processes(self) -> list[dict[str, Any]]:
+        return self.verdict.leaked_processes
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "trial_id": self.trial_id,
@@ -254,6 +260,7 @@ class TrialResult:
             "rep_index": self.rep_index,
             "passed": self.passed,
             "anti_cheat_clean": self.anti_cheat_clean,
+            "leaked_processes": list(self.verdict.leaked_processes),
             "usage": self.usage.to_dict(),
             "verdict": self.verdict.to_dict(),
             "steps": [s.to_dict() for s in self.steps],

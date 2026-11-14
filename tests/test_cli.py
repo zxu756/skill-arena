@@ -318,6 +318,12 @@ def test_repo_has_no_demo_leaderboard_or_fabricated_sonnet_title() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     assert not (repo_root / "docs" / "demo-leaderboard.html").exists()
 
+    docs_dir = repo_root / "docs"
+    if docs_dir.exists():
+        assert list(docs_dir.glob("screenshot-*.png")) == [], (
+            "Fabricated v0.2.0 screenshots must be removed from docs/"
+        )
+
     banned = "Claude Sonnet 4.5" + ": Baseline vs Curated Engineering"
     offenders: list[str] = []
     for path in repo_root.rglob("*"):
@@ -334,3 +340,96 @@ def test_repo_has_no_demo_leaderboard_or_fabricated_sonnet_title() -> None:
             offenders.append(str(path.relative_to(repo_root)))
 
     assert offenders == [], f"Fabricated demo title still present in: {offenders}"
+
+
+def test_readmes_have_no_fabricated_images_and_disclose_unreleased_and_limitations() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    # K12: No fabricated screenshot links
+    assert "docs/screenshot-" not in readme_en
+    assert "docs/screenshot-" not in readme_zh
+
+    # W5: Clean title without branch suffix, and unreleased behaviors marked clearly
+    assert readme_en.splitlines()[0].strip() == "# SkillArena"
+    assert readme_zh.splitlines()[0].strip() == "# SkillArena"
+    assert "(m0/honest)" not in readme_en
+    assert "(m0/honest)" not in readme_zh
+    assert "Unreleased" in readme_en and "v0.2.0" in readme_en
+    assert "未发布" in readme_zh and "v0.2.0" in readme_zh
+
+    # K13: macOS SIP platform binary double-fork + setsid non-guarantee
+    assert "SIP" in readme_en and "/bin/sleep" in readme_en and "does not guarantee" in readme_en
+    assert "SIP" in readme_zh and "/bin/sleep" in readme_zh and "不保证" in readme_zh
+
+    # Extract-commit implementation filenames & repo_path limitation
+    assert "implementation filename" in readme_en.lower() and "repo_path" in readme_en
+    assert "实现文件名" in readme_zh and "repo_path" in readme_zh
+
+
+def test_cli_run_missing_pytest_fails_preflight_with_nonzero_exit(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bin_dir = tmp_path / "no_pytest_bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "python3",
+        "#!/bin/sh\necho 'No module named pytest' >&2\nexit 1\n",
+    )
+    agent_ran_marker = tmp_path / "agent_ran.txt"
+    _write_executable(
+        bin_dir / "opencode",
+        f"#!/bin/sh\necho ran > {str(agent_ran_marker)!r}\nexit 0\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
+
+    spec_path = tmp_path / "pytest_task.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "task_id": "pytest-preflight",
+                "title": "Pytest Preflight Task",
+                "category": "refactor_test",
+                "prompt": "Fix m.py",
+                "test_command": "python3 -m pytest tests/test_m.py",
+                "protected_test_paths": ["tests/test_m.py"],
+                "seed_files": {
+                    "m.py": "def f(): return 1\n",
+                    "tests/test_m.py": "from m import f\ndef test_f(): assert f() == 1\n",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "preflight.sqlite"
+
+    for lang_code in ("en", "zh"):
+        rc = main(
+            [
+                "--lang",
+                lang_code,
+                "run",
+                "--cli",
+                "opencode",
+                "--model",
+                "stub-model",
+                "--allow-unisolated-host-home",
+                "--suite",
+                str(spec_path),
+                "--reps",
+                "1",
+                "--db",
+                str(db_path),
+            ]
+        )
+        captured = capsys.readouterr()
+        combined = captured.out + "\n" + captured.err
+        assert rc != 0, f"Expected non-zero exit when pytest missing ({lang_code}), got {rc}"
+        assert "pytest" in combined.lower()
+        assert not agent_ran_marker.exists(), "Agent CLI must not run when pytest preflight fails!"
+        assert not db_path.exists(), "Database must not be created when pytest preflight fails!"
+

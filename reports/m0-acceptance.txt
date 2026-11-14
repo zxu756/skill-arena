@@ -1,11 +1,11 @@
 ================================================================
 SkillArena Milestone M0 Acceptance Suite (Stub Agents Only)
-Repository: skill-arena (branch: m0/honest)
+Workspace: <REPO_ROOT> (branch: m0/honest)
 ================================================================
 
-[Row 1/8] --cli simulate outputs SIMULATED in CLI/DB/HTML & fabricated title absent...
+[Row 1/8] --cli simulate outputs SIMULATED in CLI/DB/HTML, fabricated title & screenshots absent...
   SQLite verified: experiments.is_simulated=1, trials.is_simulated=1
-  PASS Row 1: CLI, SQLite DB, and HTML carry SIMULATED; repo search returned 0 matches.
+  PASS Row 1: CLI, SQLite DB, and HTML carry SIMULATED; fabricated screenshots & headline absent.
 
 [Row 2/8] Stub writes wrong answer + tests/__init__.py (os._exit(0))...
   PASS Row 2: Both arms marked FAILED & anti-cheat flagged tests/__init__.py.
@@ -16,20 +16,24 @@ Repository: skill-arena (branch: m0/honest)
 [Row 4/8] Stub writes reference passing answer then sleeps past timeout...
   PASS Row 4: Timed-out trials marked FAILED with explicit timeout reason.
 
-[Row 5/8] Stub spawns detached setsid background sleeper and exits...
-  PASS Row 5: Completed in 1.27s (<10s) and reaped all detached setsid PIDs.
+[Row 5/8] Detached setsid & double-fork background daemons (K13)...
+  PASS Row 5: Double-fork + setsid + close-fd + chdir('/') non-SIP daemons killed, recorded in leaked_processes, and trials marked FAILED (<10s).
+  Verified README.md & README.zh-CN.md explicitly document macOS SIP /bin/sleep double-fork non-guarantee.
 
 [Row 6/8] extract-commit omits commit message & isolates task workspace git history...
   PASS Row 6: Prompt contains zero commit message lines; workspace git log --all hides fix commit.
 
-[Row 7/8] extract-commit on pytest-style repo + no-op stub agent -> FAIL...
+[Row 7/8] extract-commit on pytest-style repo + no-op stub -> FAIL & pytest preflight check...
   PASS Row 7: Auto-detected 'python3 -m pytest tests/test_m.py' and marked no-op stub trials FAILED.
+  Verified preflight check fails immediately with non-zero exit when pytest is missing.
 
-[Row 8/8] Running 3 live mutation checks (timeout kill, Pass^k=1, test restoration)...
-  Mutation 8a (remove timeout kill) -> RED confirmed.
-  Mutation 8b (force Pass^k = 1.0) -> RED confirmed.
-  Mutation 8c (skip restoring tampered tests) -> RED confirmed.
-  PASS Row 8: All 3 mutations turned scoped tests RED.
+[Row 8/8] Running scripted mutation checks on isolated repository clone (W1)...
+  Mutation 8a (delete timeout process-group kill) -> FAILED tests/test_sandbox.py::test_run_bounded_command_kills_timed_out_leader_and_process_group (exit 1) & restored clean (git status empty, test GREEN).
+  Mutation 8b (force Pass^k = 1.0) -> FAILED tests/test_store.py::test_pass_hat_k_exact_values_reject_constant_one_mutation (exit 1) & restored clean (git status empty, test GREEN).
+  Mutation 8c (skip restoring tampered test files) -> FAILED tests/test_graders.py::test_protected_test_restoration_restores_original_bytes_and_cleans_diff (exit 1) & restored clean (git status empty, test GREEN).
+  Mutation 8d (ignore agent timeout during grading) -> FAILED tests/test_sandbox.py::test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper (exit 1) & restored clean (git status empty, test GREEN).
+  Mutation 8e (disable SKILL_ARENA_TRIAL_TOKEN scan) -> FAILED tests/test_sandbox.py::test_detached_double_fork_non_sip_daemon_is_killed_and_fails_trial (exit 1) & restored clean (git status empty, test GREEN).
+  PASS Row 8: All 5 mutations failed their exact named tests (exit 1) and restored cleanly.
 
 ================================================================
 RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED

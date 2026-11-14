@@ -13,7 +13,7 @@ import time
 import urllib.request
 import uuid
 
-from skill_arena.graders.deterministic import evaluate_sandbox
+from skill_arena.graders.deterministic import evaluate_sandbox, verify_test_runner_available
 from skill_arena.models import ContenderConfig, TaskSpec, TrajectoryStep, TrialResult
 from skill_arena.runners.wire_tap_proxy import LoopbackWireTapProxy
 from skill_arena.sandbox.skill_injector import SkillInjector, SkillMountReport
@@ -159,6 +159,8 @@ class HarnessDriver:
                 "(--dangerously-skip-permissions / --full-auto)."
             )
 
+        verify_test_runner_available(task.test_command)
+
         trial_id = f"tr_{uuid.uuid4().hex[:10]}"
         slug = f"{task.task_id}__{contender.contender_id}__r{rep_index}"
         started_at = datetime.now(timezone.utc).isoformat()
@@ -178,6 +180,7 @@ class HarnessDriver:
                 agent_timed_out=bool(exec_outcome and exec_outcome.timed_out),
                 reaped_descendant_pids=list(exec_outcome.reaped_descendant_pids) if exec_outcome else [],
                 unreaped_descendant_pids=list(exec_outcome.unreaped_descendant_pids) if exec_outcome else [],
+                leaked_processes=list(exec_outcome.leaked_processes) if exec_outcome else [],
             )
             steps.append(
                 TrajectoryStep(

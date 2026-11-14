@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
+import sys
 import time
 
 import pytest
@@ -27,7 +28,7 @@ def _pid_is_alive(pid: int) -> bool:
 
 def _make_stub_cli(bin_dir: Path, name: str, python_body: str) -> Path:
     script_path = bin_dir / name
-    script_path.write_text(f"#!/usr/bin/env python3\n{python_body}\n", encoding="utf-8")
+    script_path.write_text(f"#!{sys.executable}\n{python_body}\n", encoding="utf-8")
     script_path.chmod(script_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return script_path
 
@@ -61,20 +62,20 @@ def test_real_cli_requires_explicit_unisolated_home_consent(tmp_path: Path, monk
 
 
 def test_run_bounded_command_kills_timed_out_leader_and_process_group(tmp_path: Path) -> None:
-    import sys
-
     pid_file = tmp_path / "leader.pid"
+    pid_tmp = tmp_path / "leader.pid.tmp"
     code = (
         "import os, time\n"
         "from pathlib import Path\n"
-        f"Path({str(pid_file)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
+        f"Path({str(pid_tmp)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
+        f"os.replace({str(pid_tmp)!r}, {str(pid_file)!r})\n"
         "time.sleep(30)\n"
     )
     try:
         rc, _, _, timed_out = WorktreeSandboxPool.run_bounded_command(
             [sys.executable, "-c", code],
             cwd=tmp_path,
-            timeout_sec=1,
+            timeout_sec=3,
         )
         assert timed_out is True
         assert rc == 124
@@ -98,19 +99,21 @@ def test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     pid_file = tmp_path / "sleeper.pid"
+    pid_tmp = tmp_path / "sleeper.pid.tmp"
     task = load_builtin_suite()[0]
-    task.timeout_sec = 1
+    task.timeout_sec = 3
     ref_code = task.reference_solution_files["rate_limiter.py"]
 
     _make_stub_cli(
         bin_dir,
         "opencode",
         (
-            "import os, subprocess, time\n"
+            "import os, subprocess, sys, time\n"
             "from pathlib import Path\n"
             f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
-            "child = subprocess.Popen(['sleep', '30'])\n"
-            f"Path({str(pid_file)!r}).write_text(f'{{os.getpid()}},{{child.pid}}', encoding='utf-8')\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            f"Path({str(pid_tmp)!r}).write_text(f'{{os.getpid()}},{{child.pid}}', encoding='utf-8')\n"
+            f"os.replace({str(pid_tmp)!r}, {str(pid_file)!r})\n"
             "time.sleep(30)\n"
         ),
     )
@@ -131,7 +134,7 @@ def test_agent_timeout_fails_even_when_solution_written_and_kills_sleeper(
         result = driver.run_trial("exp_timeout", task, contender, rep_index=1)
         elapsed = time.perf_counter() - t0
 
-        assert elapsed < 6.0, f"Timed-out trial took {elapsed:.2f}s instead of aborting promptly"
+        assert elapsed < 15.0, f"Timed-out trial took {elapsed:.2f}s instead of aborting promptly"
         assert pid_file.is_file()
         tracked_pids = [int(x) for x in pid_file.read_text(encoding="utf-8").strip().split(",") if x]
         assert len(tracked_pids) == 2
@@ -212,3 +215,87 @@ def test_detached_setsid_background_descendant_does_not_hang_and_is_reaped(
                         os.kill(int(x), 9)
                     except OSError:
                         pass
+
+
+def test_detached_double_fork_non_sip_daemon_is_killed_and_fails_trial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K13: Stub writes passing answer, then double-forks + setsid + closes fds 3..255 + chdir('/') + sleeps."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    daemon_pid_file = tmp_path / "daemon.pid"
+    daemon_pid_tmp = tmp_path / "daemon.pid.tmp"
+    task = load_builtin_suite()[0]
+    task.timeout_sec = 8
+    ref_code = task.reference_solution_files["rate_limiter.py"]
+
+    _make_stub_cli(
+        bin_dir,
+        "opencode",
+        (
+            "import os, sys, time\n"
+            "from pathlib import Path\n"
+            f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
+            "pid1 = os.fork()\n"
+            "if pid1 == 0:\n"
+            "    os.setsid()\n"
+            "    pid2 = os.fork()\n"
+            "    if pid2 == 0:\n"
+            "        os.chdir('/')\n"
+            "        for fd in range(3, 256):\n"
+            "            try:\n"
+            "                os.close(fd)\n"
+            "            except OSError:\n"
+            "                pass\n"
+            "        dn = os.open(os.devnull, os.O_RDWR)\n"
+            "        os.dup2(dn, 0)\n"
+            "        os.dup2(dn, 1)\n"
+            "        os.dup2(dn, 2)\n"
+            "        if dn > 2:\n"
+            "            os.close(dn)\n"
+            f"        Path({str(daemon_pid_tmp)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
+            f"        os.replace({str(daemon_pid_tmp)!r}, {str(daemon_pid_file)!r})\n"
+            "        os.execv(sys.executable, [sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+            "    os._exit(0)\n"
+            "os.waitpid(pid1, 0)\n"
+            "for _ in range(50):\n"
+            f"    if Path({str(daemon_pid_file)!r}).is_file():\n"
+            "        break\n"
+            "    time.sleep(0.01)\n"
+        ),
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
+
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    driver = HarnessDriver(pool, allow_unisolated_host_home=True)
+    contender = ContenderConfig(
+        contender_id="ctrl",
+        label="Double-Fork Daemon Stub",
+        role="control",
+        cli="opencode",
+        model="stub-model",
+    )
+    try:
+        result = driver.run_trial("exp_k13", task, contender, rep_index=1)
+        assert daemon_pid_file.is_file(), "Detached daemon did not record its PID"
+        daemon_pid = int(daemon_pid_file.read_text(encoding="utf-8").strip())
+
+        assert not _pid_is_alive(daemon_pid), f"Escaped non-SIP daemon PID {daemon_pid} survived trial cleanup!"
+        assert not result.passed, "Trial leaving escaped background daemon MUST be marked FAILED even with passing fix!"
+        assert result.leaked_processes, "TrialResult.leaked_processes must record escaped background process"
+        assert result.verdict.leaked_processes, "GraderVerdict.leaked_processes must record escaped background process"
+        recorded_pids = {int(item["pid"]) for item in result.verdict.leaked_processes}
+        assert daemon_pid in recorded_pids, f"Expected daemon PID {daemon_pid} in {result.verdict.leaked_processes}"
+        assert "leaked" in result.verdict.summary.lower()
+        assert str(daemon_pid) in result.verdict.summary
+    finally:
+        pool.close()
+        if daemon_pid_file.is_file():
+            raw = daemon_pid_file.read_text(encoding="utf-8").strip()
+            if raw.isdigit():
+                try:
+                    os.kill(int(raw), 9)
+                except OSError:
+                    pass

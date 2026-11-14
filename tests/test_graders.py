@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
+import sys
 
 import pytest
 
@@ -90,7 +92,13 @@ def test_forbidden_agent_files_are_rejected_and_not_copied_to_clean_grading_chec
         pool.close()
 
 
-def test_zero_tests_executed_marks_trial_failed_for_unittest_and_pytest(tmp_path: Path) -> None:
+def test_zero_tests_executed_marks_trial_failed_for_unittest_and_pytest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    monkeypatch.setenv("PATH", f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}")
     pool = WorktreeSandboxPool(tmp_path / "pool")
     try:
         # 1. unittest exits 0 on 'Ran 0 tests in 0.000s' when no TestCase exists!
@@ -156,6 +164,44 @@ def test_protected_test_restoration_restores_original_bytes_and_cleans_diff(tmp_
         assert "tests/test_rate_limiter.py" in verdict.tampered_test_files
         assert test_path.read_bytes() == original_bytes, "Protected test file MUST be restored on disk!"
         assert "tests/test_rate_limiter.py" not in git_diff, "Restored test file must not appear in implementation diff!"
+    finally:
+        pool.release(handle)
+        pool.close()
+
+
+def test_missing_pytest_in_grading_python_fails_preflight_immediately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bin_dir = tmp_path / "no_pytest_bin"
+    bin_dir.mkdir()
+    fake_py = bin_dir / "python3"
+    fake_py.write_text(
+        "#!/bin/sh\n"
+        'echo "No module named pytest" >&2\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_py.chmod(fake_py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = TaskSpec(
+        task_id="need-pytest",
+        title="Pytest preflight check",
+        category="refactor_test",
+        prompt="Fix m.py",
+        test_command="python3 -m pytest tests/test_m.py",
+        protected_test_paths=["tests/test_m.py"],
+        seed_files={
+            "m.py": "def f(): return 1\n",
+            "tests/test_m.py": "from m import f\ndef test_f(): assert f() == 1\n",
+        },
+    )
+    handle = pool.acquire(task, "no_pytest_check")
+    try:
+        with pytest.raises(RuntimeError, match="pytest"):
+            evaluate_sandbox(handle, task)
     finally:
         pool.release(handle)
         pool.close()

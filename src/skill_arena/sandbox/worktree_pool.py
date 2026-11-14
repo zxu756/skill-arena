@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Any
+import uuid
 
 from skill_arena.models import TaskSpec
 
@@ -167,6 +169,58 @@ def _find_pids_with_cwd_under(target_dir: Path) -> set[int]:
     return found
 
 
+def _find_pids_with_env_token(token_value: str) -> set[int]:
+    """Scan current user's processes (including detached setsid `??` daemons) for SKILL_ARENA_TRIAL_TOKEN."""
+    if not token_value:
+        return set()
+    ps_bin = shutil.which("ps") or "/bin/ps"
+    if not os.path.exists(ps_bin):
+        return set()
+    clean_env = {k: v for k, v in os.environ.items() if k != "SKILL_ARENA_TRIAL_TOKEN"}
+    needle = f"SKILL_ARENA_TRIAL_TOKEN={token_value}"
+    proc = subprocess.run(
+        [ps_bin, "xewwo", "pid=,command="],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        proc = subprocess.run(
+            [ps_bin, "-u", str(os.getuid()), "-o", "pid=,command=", "-e"],
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    found: set[int] = set()
+    for line in proc.stdout.splitlines():
+        if needle not in line:
+            continue
+        stripped = line.lstrip()
+        parts = stripped.split(None, 1)
+        if parts and parts[0].isdigit():
+            pid = int(parts[0])
+            if pid != os.getpid():
+                found.add(pid)
+    return found
+
+
+def _describe_pid_command(pid: int) -> str:
+    """Return clean argv string (without environment variables) for `pid`, or empty string if exited."""
+    ps_bin = shutil.which("ps") or "/bin/ps"
+    if not os.path.exists(ps_bin):
+        return ""
+    proc = subprocess.run(
+        [ps_bin, "-p", str(pid), "-o", "args="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    cmd = proc.stdout.strip()
+    return cmd[:240] if cmd else ""
+
+
 @dataclass(slots=True)
 class BoundedCommandOutcome:
     """Process execution result including timeout and orphan-descendant reaping telemetry."""
@@ -177,6 +231,7 @@ class BoundedCommandOutcome:
     timed_out: bool
     reaped_descendant_pids: list[int] = field(default_factory=list)
     unreaped_descendant_pids: list[int] = field(default_factory=list)
+    leaked_processes: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -436,6 +491,8 @@ class WorktreeSandboxPool:
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
+        trial_token = merged_env.get("SKILL_ARENA_TRIAL_TOKEN") or f"sa_trial_{uuid.uuid4().hex}"
+        merged_env["SKILL_ARENA_TRIAL_TOKEN"] = trial_token
 
         lock_fd_tmp, lock_name = tempfile.mkstemp(prefix="sa_proc_lock_")
         lock_path = Path(lock_name)
@@ -449,6 +506,7 @@ class WorktreeSandboxPool:
         timed_out = False
         reaped: list[int] = []
         unreaped: list[int] = []
+        leaked_records: list[dict[str, Any]] = []
 
         def _drain_fd_nonblocking(fd: int, sink: list[bytes]) -> bool:
             """Drain available bytes from non-blocking fd; return True when EOF is reached."""
@@ -542,8 +600,11 @@ class WorktreeSandboxPool:
                     candidates |= _find_pids_holding_file(lock_path)
                 if reap_sandbox_cwd or pipes_still_held:
                     candidates |= _find_pids_with_cwd_under(cwd)
+                if reap_sandbox_cwd:
+                    candidates |= _find_pids_with_env_token(trial_token)
                 escaped = sorted(pid for pid in (candidates - exclude) if _pid_alive(pid))
                 if escaped:
+                    cmd_by_pid = {pid: _describe_pid_command(pid) for pid in escaped}
                     for pid in escaped:
                         _kill_pid_and_group(pid, signal.SIGKILL)
                     time.sleep(0.05)
@@ -552,10 +613,18 @@ class WorktreeSandboxPool:
                             _kill_pid_and_group(pid, signal.SIGKILL)
                     time.sleep(0.03)
                     for pid in escaped:
-                        if _pid_alive(pid):
+                        still_alive = _pid_alive(pid)
+                        if still_alive:
                             unreaped.append(pid)
                         else:
                             reaped.append(pid)
+                        leaked_records.append(
+                            {
+                                "pid": pid,
+                                "command": cmd_by_pid.get(pid, ""),
+                                "reaped": not still_alive,
+                            }
+                        )
 
             _drain_fd_nonblocking(out_fd, out_chunks)
             _drain_fd_nonblocking(err_fd, err_chunks)
@@ -567,6 +636,7 @@ class WorktreeSandboxPool:
                 timed_out=timed_out,
                 reaped_descendant_pids=reaped,
                 unreaped_descendant_pids=unreaped,
+                leaked_processes=leaked_records,
             )
         finally:
             if lock_fd_tmp >= 0:

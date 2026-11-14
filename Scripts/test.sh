@@ -4,40 +4,44 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ -d "${ROOT_DIR}/.venv/bin" ]]; then
-  export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
-fi
-
-PYTEST="${ROOT_DIR}/.venv/bin/pytest"
-if [[ ! -x "$PYTEST" ]]; then
-  PYTEST="pytest"
-fi
+# shellcheck source=Scripts/_bootstrap_env.sh
+source "${ROOT_DIR}/Scripts/_bootstrap_env.sh"
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
   Scripts/test.sh scope <graders|sandbox|proxy|extractor|store|cli> [...]
-  Scripts/test.sh milestone <N>
-  Scripts/test.sh release
+  Scripts/test.sh milestone <N> [--record]
+  Scripts/test.sh release [--record]
 EOF
   exit 2
 }
 
-if [[ $# -lt 1 ]]; then
+RECORD_FLAG=()
+POSITIONAL=()
+for arg in "$@"; do
+  if [[ "$arg" == "--record" ]]; then
+    RECORD_FLAG=("--record")
+  else
+    POSITIONAL+=("$arg")
+  fi
+done
+
+if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
   usage
 fi
 
-MODE="$1"
-shift
+MODE="${POSITIONAL[0]}"
+REST=("${POSITIONAL[@]:1}")
 
 case "$MODE" in
   scope)
-    if [[ $# -lt 1 ]]; then
+    if [[ ${#REST[@]} -lt 1 || ${#RECORD_FLAG[@]} -gt 0 ]]; then
       usage
     fi
     FILES=()
     K_EXPR=()
-    for mod in "$@"; do
+    for mod in "${REST[@]}"; do
       case "$mod" in
         graders)
           [[ -f tests/test_graders.py ]] && FILES+=("tests/test_graders.py")
@@ -82,23 +86,24 @@ case "$MODE" in
     ;;
 
   milestone)
-    if [[ $# -ne 1 ]]; then
+    if [[ ${#REST[@]} -ne 1 ]]; then
       usage
     fi
-    MS="$1"
+    MS="${REST[0]}"
     if [[ "$MS" != "0" ]]; then
       echo "Milestone M${MS} acceptance script is not implemented yet." >&2
       exit 2
     fi
+    export SKILL_ARENA_IN_MILESTONE=1
     "$PYTEST" -q
     if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
-      Scripts/acceptance/m0-acceptance.sh
+      Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
       echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
       exit 1
     fi
     if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh
+      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
       echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
       exit 1
@@ -106,15 +111,19 @@ case "$MODE" in
     ;;
 
   release)
+    if [[ ${#REST[@]} -ne 0 ]]; then
+      usage
+    fi
+    export SKILL_ARENA_IN_MILESTONE=1
     "$PYTEST" -q
     if [[ -x Scripts/acceptance/m0-acceptance.sh ]]; then
-      Scripts/acceptance/m0-acceptance.sh
+      Scripts/acceptance/m0-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
       echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
       exit 1
     fi
     if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
-      Scripts/acceptance/readme-commands.sh
+      Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     else
       echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
       exit 1

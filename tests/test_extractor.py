@@ -142,12 +142,14 @@ def test_extract_commit_autodetects_pytest_and_noop_stub_fails(
     assert "pytest" in spec.test_command
 
     # Run a no-op stub agent via HarnessDriver -> MUST FAIL, never pass with 0 tests!
+    import sys
+
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     noop = bin_dir / "opencode"
-    noop.write_text("#!/usr/bin/env python3\nprint('noop')\n", encoding="utf-8")
+    noop.write_text(f"#!{sys.executable}\nprint('noop')\n", encoding="utf-8")
     noop.chmod(noop.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{Path(sys.executable).parent}:{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
 
     pool = WorktreeSandboxPool(tmp_path / "pool")

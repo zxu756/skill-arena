@@ -11,6 +11,7 @@ import uuid
 
 from skill_arena import __version__
 from skill_arena.extractor.git_commit_extractor import extract_task_from_commit
+from skill_arena.graders.deterministic import verify_suite_runners_available
 from skill_arena.i18n import (
     ROLE_ZH,
     SUPPORTED_LANG_CHOICES,
@@ -56,6 +57,7 @@ def run_ab_experiment(
     allow_unisolated_host_home: bool = False,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
+    verify_suite_runners_available(tasks)
     is_sim_exp = any(c.cli.split(":", 1)[0] == "simulate" for c in contenders)
     db.create_experiment(
         exp_id,
@@ -340,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             tasks = _load_tasks(args.suite)
+            verify_suite_runners_available(tasks)
             db = ArenaDatabase(args.db)
             contenders = [
                 ContenderConfig(
@@ -373,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
                 lang=lang,
                 allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
             )
-        except (ValueError, PermissionError) as exc:
+        except (ValueError, PermissionError, RuntimeError) as exc:
             print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
             return 2
 
