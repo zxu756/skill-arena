@@ -2,57 +2,70 @@
 
 **[English](README.md)** | **简体中文**
 
-**跨厂商编程智能体与 `SKILL.md` 科学 A/B 基准评测框架（`v0.2.0`）**：基于独立 `git worktree` 隔离沙盒、免证书本地回环 Token 流量监听代理、零大模型确定性判分器（内置受保护单测 SHA-256 防篡改校验与 Hallmark 前端工艺检查）、成对 Bradley-Terry `BT Elo` 评分，以及支持 **中文 | EN** 实时切换的双轨执行轨迹与代码补丁回放工作台。
+**受控 Git Worktree 编程智能体与 `SKILL.md` A/B 基准评测框架（`v0.2.0`）**：提供逐轮独立沙盒检出、干净检出确定性单测与 Hallmark 前端工艺判分、受保护测试 SHA-256 防篡改校验、本地 HTTP 回环用量代理，以及支持 **中文 | EN** 实时切换的双轨轨迹与代码补丁回放工作台。
 
-![SkillArena 排行榜与成本效能看板](docs/screenshot-main-zh.png)
+![SkillArena 排行榜与成本效能看板（演示 / 模拟数据）](docs/screenshot-main-zh.png)
+*`[演示 / 模拟数据]` 上图由内置合成模拟器（`--cli simulate`）生成，仅用于展示界面与管线结构，不代表任何真实模型或外部 `SKILL.md` 的评测表现。*
 
-![SkillArena 双轨执行轨迹与代码补丁同步回放](docs/screenshot-replay-zh.png)
+![SkillArena 双轨执行轨迹与代码补丁同步回放（演示 / 模拟数据）](docs/screenshot-replay-zh.png)
+*`[演示 / 模拟数据]` 来自 `--cli simulate` 合成校准夹具的双轨轨迹与补丁同步回放预览。*
 
-## 为什么需要 SkillArena？
+## 当前已实现能力
 
-日常安装新的 `SKILL.md`、修改 `AGENTS.md` / `CLAUDE.md`，或在 `claude`、`codex`、`opencode`、`vibe`、`agy` 等不同智能体 CLI 之间切换时，往往只能凭主观体感判断好坏。**SkillArena** 将智能体与技能包评估转化为可复现、零裁判模型 Token 开销的严谨工程体系：
+1. **独立沙盒检出与干净目录判分** - 每一次 `(任务, 参赛组别, 重复轮次)` 在独立沙盒目录中执行，配备进程组级超时强杀与脱离进程组的后台子孙进程回收；超时一律直接判失败。判分在全新干净检出目录中进行，仅搬运允许的非测试源码变更：智能体新增或修改 `tests/*`、`__init__.py`、与标准库/测试器同名的模块（如 `unittest.py`、`pytest.py`、`sitecustomize.py`）或运行了 `0` 个测试，均直接判失败。
+2. **工作区级 `SKILL.md` 挂载对照** - 在 **实验组（Treatment）** 工作区的 `.agents/skills/` 与 `.claude/skills/` 中挂载待测技能目录，**对照组（Control）** 工作区不挂载待测技能（关于宿主 `HOME` 全局技能可见性的说明见下方 **当前版本限制（`M0`）**）。
+3. **本地回环用量监听（无数据时显式标记 `未计量`）** - 对走本地代理的 `claude` 与 `codex` 非流式 `/v1/messages`、`/v1/chat/completions` 请求统计输入/缓存/输出 Token 与花费。对于暂未接入代理的 CLI（`opencode`、`vibe`、`agy`）或未返回 `usage` 的上游响应，统一记录并展示为 **`未计量`（`Unmetered`）**，绝不伪造为 `0` 或 `$0.0000`。
+4. **透明的成对比较与经济学指标** - 报告经验单次通过率 `Pass@1`、多轮连续全绿一致性 `Pass^k`（要求单任务 `k/k` 轮全部通过）、摊销失败损耗的 `单次成功成本 Cost-per-Success ($)`、**成对胜率换算的 Elo（双组）**（以对照组 1500 分为基准的双组闭式换算值），以及 **首轮上下文税（Turn-1 Context Tax）**（定义为 *实验组与对照组首轮输入 Token 均值之差*）。
+5. **SHA-256 防作弊完整性校验** - 运行后逐字节比对受保护测试文件的 SHA-256 摘要，拦截测试与运行器路径绕过，恢复被改动的测试文件并判定该轮违规失败。
+6. **Git 历史提交任务提取（`extract-commit`）** - 从本地 Git 缺陷修复提交提取评测任务：提示词中不包含提交标题与正文说明，沙盒仅导出修复前父提交的干净文件树快照（不含修复提交的 `.git` 历史），并自动识别 `pytest` 与 `unittest`（无法唯一判定时要求显式传入 `--test-cmd`）。
+7. **原生中英双语 CLI 与实时切换看板** - 支持 `--lang {auto,zh,en}`、`SKILL_ARENA_LANG` 与 `LC_ALL` / `LANG`（`zh*`）自动识别；使用 `--cli simulate` 时，终端、数据库与导出 HTML 均显著标注 `[SIMULATED / 模拟数据]`。
 
-1. **Git Worktree 隔离沙盒** - 每一次 `(任务, 参赛组别, 重复轮次)` 均在干净的分离头指针 `git worktree` 或独立种子仓库中执行，并配备进程组级超时回收机制。
-2. **受控 `SKILL.md` 挂载对照** - 在 **对照组（Control）** 中自动剥离全局环境技能干扰，在 **实验组（Treatment）** 中精确挂载待测 `SKILL.md` 目录至 `.agents/skills/` 与 `.claude/skills/`。
-3. **免证书本地回环 Token 监听代理** - 内嵌 HTTP/1.1 反向代理，精准计量每轮输入 Token、提示词缓存命中（Cache Read）、输出 Token、首字节延迟（TTFT）、端到端耗时，以及 **首轮技能上下文税（Turn-1 Context Tax）**。
-4. **科学可靠性、BT Elo 与真实经济学指标** - 自动计算成对 Bradley-Terry `BT Elo` 等级分、无偏单次通过率 `Pass@1`、多轮连续全绿一致性 `Pass^k`（要求单任务 `k/k` 全部通过），以及摊销失败重试损耗后的 **单次成功真实成本 `Cost-per-Success ($)`**。
-5. **SHA-256 防作弊完整性校验** - 运行前对受保护测试文件生成 SHA-256 快照；一旦智能体试图篡改或删除测试断言来伪造通过退出码，`防作弊完整性（Test Integrity）` 将立即拦截违规、还原测试文件并判定该轮失败。
-6. **Git 历史提交一键提取（`extract-commit`）** - 一条命令即可将任意本地 Git 仓库中的真实缺陷修复提交拆解为无答案泄露的 `(parent_sha, test_patch, prompt)` 标准评测任务。
-7. **原生中英双语 CLI 与 Web 实时切换（`v0.2.0`）** - 命令行全面支持 `--lang {auto,zh,en}`、`SKILL_ARENA_LANG` 环境变量与系统 `LC_ALL` / `LANG`（`zh*`）自动识别；单文件 HTML 报告与 Web Studio 顶部内置 **中文 | EN** 实时切换胶囊（支持 `localStorage` 记忆、浏览器语言自动匹配与 `?lang=zh` 参数直达）。
+## 当前版本限制（`M0`）
+
+- **对照组仍可见宿主 `HOME` 下的全局技能（`K1`，计划在 `M1` 隔离）**：虽然工作区内的 `.agents/skills/` 与 `.claude/skills/` 已按组隔离，但 `M0` 尚未替换子进程的 `HOME` 目录，两组目前仍可看到 `~/.claude/skills` 与 `~/.agents/skills` 中的宿主全局技能。按轮次隔离 `HOME` 与凭据目录将在 `M1` 实现。
+- **运行真实智能体需显式传入风险确认参数（`K2`）**：由于 `M0` 在真实用户 `HOME` 下以跳过权限确认方式（`--dangerously-skip-permissions` / `--full-auto`）启动无头智能体，未传入 `--allow-unisolated-host-home` 时 `skill-arena run` 会直接拒绝执行。
+- **计量代理覆盖范围（`K7`–`K9`，计划在 `M1` 统一）**：`opencode`、`vibe`、`agy` 尚未接入 `agent-relay` 统一计量，指标显示为 `未计量`；当前代理对流式响应采用整包缓冲转发（流式首字延迟与 OpenAI Responses 接口计量将在 `M1` 收敛）。
+- **合成模拟器边界（`K3`）**：`--cli simulate` 仅用固定规则与合成公式离线自检评测管线，所有输出强制携带 `SIMULATED` 标记，且拒绝接收真实模型名称或 `--skill` 技能路径。
 
 ## 快速上手
 
 环境要求：**Python 3.11+** 与 `git`（零第三方运行时依赖）。
 
 ```bash
-# 直接通过 uv 运行（也可使用 `uv tool install .` 或 `pipx install .` 全局安装）
+# 1. 查看内置 8 项校准基准任务（支持简体中文与英文输出）
 uv run skill-arena --lang zh list-suites
+uv run skill-arena --lang en list-suites
 
-# 运行 3 轮重复的对照组 vs 实验组 A/B 校准评测，并导出单文件双语 HTML 报告
+# 2. 运行离线合成管线自检（--cli simulate 的终端、数据库与 HTML 均带 SIMULATED 模拟数据标记）
 uv run skill-arena run \
   --lang zh \
-  --suite builtin-8 \
-  --cli mock \
-  --model claude-sonnet-4-5 \
-  --skill ~/.agents/skills/hallmark \
-  --reps 3 \
-  --title "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills" \
-  --html-out docs/demo-leaderboard.html
+  --cli simulate \
+  --suite concurrency \
+  --reps 1 \
+  --db .skill-arena/sim-check.sqlite \
+  --html-out .skill-arena/sim-check.html
 
-# 评测真实无头编程智能体 CLI（支持 claude, codex, opencode, vibe, agy）
+uv run skill-arena compare --lang zh --db .skill-arena/sim-check.sqlite
+```
+
+### 运行真实无头编程智能体（需显式传入 `--allow-unisolated-host-home`）
+
+```bash
+# 需本机已安装对应 CLI，并显式确认知晓 M0 在宿主 HOME 下运行：
 uv run skill-arena run \
   --lang zh \
   --suite concurrency \
   --cli claude \
   --model claude-sonnet-4-5 \
-  --skill ~/.agents/skills/systematic-debugging \
-  --reps 3
+  --skill /path/to/candidate-skill \
+  --reps 3 \
+  --allow-unisolated-host-home
 
 # 启动本地交互式 Web Studio（排行榜 + 双轨轨迹与 Git Diff 同步回放）
 uv run skill-arena studio --lang zh --db .skill-arena/arena.sqlite --port 8765
 ```
 
-## 从自有 Git 历史提取真实回归评测任务
+## 从自有 Git 历史提取回归评测任务
 
 ```bash
 uv run skill-arena extract-commit \
@@ -60,8 +73,6 @@ uv run skill-arena extract-commit \
   --repo /path/to/your/repo \
   --commit HEAD \
   --out tasks/my-regression.json
-
-uv run skill-arena run --lang zh --suite tasks/my-regression.json --cli codex --model gpt-5-codex --reps 3
 ```
 
 ## 内置 8 项工程校准基准任务集（`builtin-8`）
@@ -77,10 +88,15 @@ uv run skill-arena run --lang zh --suite tasks/my-regression.json --cli codex --
 | `sec-01-dsn-credential-redactor` | `security_hygiene`（安全加固） | 结构化日志中的 PostgreSQL DSN 密码、`Bearer` 令牌与 `sk-*` 密钥脱敏 |
 | `sec-02-zip-slip-tar-extractor` | `security_hygiene`（安全加固） | 阻断 Tar 归档解压中的 `../` Zip-Slip 路径穿越与符号链接逃逸 |
 
-## 开发与测试验证
+## 开发与分级测试验证
 
 ```bash
-uv run pytest
+./Scripts/test.sh scope graders
+./Scripts/test.sh scope sandbox
+./Scripts/test.sh scope proxy
+./Scripts/test.sh scope extractor
+./Scripts/test.sh scope cli
+./Scripts/test.sh milestone 0
 ```
 
 ## 开源许可

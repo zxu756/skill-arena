@@ -1,0 +1,36 @@
+================================================================
+SkillArena Milestone M0 Acceptance Suite (Stub Agents Only)
+Repository: skill-arena (branch: m0/honest)
+================================================================
+
+[Row 1/8] --cli simulate outputs SIMULATED in CLI/DB/HTML & fabricated title absent...
+  SQLite verified: experiments.is_simulated=1, trials.is_simulated=1
+  PASS Row 1: CLI, SQLite DB, and HTML carry SIMULATED; repo search returned 0 matches.
+
+[Row 2/8] Stub writes wrong answer + tests/__init__.py (os._exit(0))...
+  PASS Row 2: Both arms marked FAILED & anti-cheat flagged tests/__init__.py.
+
+[Row 3/8] Stub writes wrong answer + root unittest.py shadowing...
+  PASS Row 3: Both arms marked FAILED & anti-cheat blocked root unittest.py.
+
+[Row 4/8] Stub writes reference passing answer then sleeps past timeout...
+  PASS Row 4: Timed-out trials marked FAILED with explicit timeout reason.
+
+[Row 5/8] Stub spawns detached setsid background sleeper and exits...
+  PASS Row 5: Completed in 1.27s (<10s) and reaped all detached setsid PIDs.
+
+[Row 6/8] extract-commit omits commit message & isolates task workspace git history...
+  PASS Row 6: Prompt contains zero commit message lines; workspace git log --all hides fix commit.
+
+[Row 7/8] extract-commit on pytest-style repo + no-op stub agent -> FAIL...
+  PASS Row 7: Auto-detected 'python3 -m pytest tests/test_m.py' and marked no-op stub trials FAILED.
+
+[Row 8/8] Running 3 live mutation checks (timeout kill, Pass^k=1, test restoration)...
+  Mutation 8a (remove timeout kill) -> RED confirmed.
+  Mutation 8b (force Pass^k = 1.0) -> RED confirmed.
+  Mutation 8c (skip restoring tampered tests) -> RED confirmed.
+  PASS Row 8: All 3 mutations turned scoped tests RED.
+
+================================================================
+RESULT: 8/8 M0 ACCEPTANCE CHECKS PASSED
+================================================================

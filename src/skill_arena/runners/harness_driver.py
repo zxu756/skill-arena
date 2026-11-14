@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import time
 import urllib.request
@@ -16,7 +17,48 @@ from skill_arena.graders.deterministic import evaluate_sandbox
 from skill_arena.models import ContenderConfig, TaskSpec, TrajectoryStep, TrialResult
 from skill_arena.runners.wire_tap_proxy import LoopbackWireTapProxy
 from skill_arena.sandbox.skill_injector import SkillInjector, SkillMountReport
-from skill_arena.sandbox.worktree_pool import SandboxHandle, WorktreeSandboxPool
+from skill_arena.sandbox.worktree_pool import BoundedCommandOutcome, SandboxHandle, WorktreeSandboxPool
+
+_REAL_MODEL_OR_SKILL_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:claude|sonnet|opus|haiku|anthropic|gpt|openai|o1|o3|o4|codex|gemini|deepseek|mistral|qwen|llama|grok|"
+    r"opencode|vibe|antigravity|agy|hallmark|superpowers)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_PATH_LIKE_IN_TEXT_RE = re.compile(
+    r"(?:^|\s)(?:~/|/(?:Users|home|tmp|var|etc|opt|private)/|\.\.?/)[^\s]+|(?:\.agents|\.claude)/[^\s]*|\b[\w./-]+/SKILL\.md\b",
+    re.IGNORECASE,
+)
+
+
+def validate_simulation_inputs(
+    *,
+    model: str | None = None,
+    title: str | None = None,
+    label: str | None = None,
+    skill_paths: list[str] | None = None,
+) -> None:
+    """Reject real model names, real vendor/skill names, or skill paths in `--cli simulate` mode."""
+    if skill_paths:
+        raise ValueError(
+            "`--cli simulate` generates synthetic numbers and does not accept `--skill` paths; "
+            "use a real or stub agent CLI to evaluate skills. "
+            "/ `--cli simulate` 仅生成合成演示数据，不接受 `--skill` 路径。"
+        )
+    for field_name, val in (("model", model), ("title", title), ("label", label)):
+        if not val:
+            continue
+        m = _REAL_MODEL_OR_SKILL_TOKEN_RE.search(val)
+        if m:
+            raise ValueError(
+                f"`--cli simulate` rejects real model/vendor/skill name '{m.group(0)}' in {field_name}={val!r}; "
+                "use generic synthetic labels only. "
+                f"/ `--cli simulate` 拒绝在 {field_name} 中使用真实模型或技能名称 '{m.group(0)}'。"
+            )
+        if _PATH_LIKE_IN_TEXT_RE.search(val):
+            raise ValueError(
+                f"`--cli simulate` rejects skill or filesystem paths in {field_name}={val!r}. "
+                f"/ `--cli simulate` 不允许在 {field_name} 中填入技能或文件路径。"
+            )
 
 
 def resolve_cli_binary(cli_name: str) -> str:
@@ -81,9 +123,15 @@ def build_cli_command(contender: ContenderConfig, prompt: str) -> list[str]:
 class HarnessDriver:
     """Executes one (TaskSpec, ContenderConfig, rep) trial inside an isolated worktree sandbox."""
 
-    def __init__(self, pool: WorktreeSandboxPool, upstream_api_url: str | None = None) -> None:
+    def __init__(
+        self,
+        pool: WorktreeSandboxPool,
+        upstream_api_url: str | None = None,
+        allow_unisolated_host_home: bool = False,
+    ) -> None:
         self.pool = pool
         self.upstream_api_url = upstream_api_url
+        self.allow_unisolated_host_home = allow_unisolated_host_home
 
     def run_trial(
         self,
@@ -92,6 +140,25 @@ class HarnessDriver:
         contender: ContenderConfig,
         rep_index: int,
     ) -> TrialResult:
+        base_cli = contender.cli.split(":", 1)[0]
+        if base_cli == "mock":
+            raise ValueError(
+                "`--cli mock` has been removed and renamed to `--cli simulate` (`--cli mock` 已更名为 `--cli simulate`)."
+            )
+        is_simulated = base_cli == "simulate"
+        if is_simulated:
+            validate_simulation_inputs(
+                model=contender.model,
+                label=contender.label,
+                skill_paths=contender.skill_paths,
+            )
+        elif not (self.allow_unisolated_host_home or contender.allow_unisolated_host_home):
+            raise PermissionError(
+                "Refusing to launch real/headless agent CLI without `--allow-unisolated-host-home`: "
+                "M0 runs the agent in the real user HOME directory with skipped permission prompts "
+                "(--dangerously-skip-permissions / --full-auto)."
+            )
+
         trial_id = f"tr_{uuid.uuid4().hex[:10]}"
         slug = f"{task.task_id}__{contender.contender_id}__r{rep_index}"
         started_at = datetime.now(timezone.utc).isoformat()
@@ -99,18 +166,28 @@ class HarnessDriver:
         handle = self.pool.acquire(task, slug)
         try:
             mount_report = SkillInjector.apply(handle.root, contender)
-            if contender.cli.startswith("mock"):
-                usage, steps = self._execute_mock_contender(handle, task, contender, mount_report, rep_index)
+            exec_outcome: BoundedCommandOutcome | None = None
+            if is_simulated:
+                usage, steps = self._execute_simulated_contender(handle, task, contender, mount_report, rep_index)
             else:
-                usage, steps = self._execute_real_cli(handle, task, contender, mount_report)
+                usage, steps, exec_outcome = self._execute_real_cli(handle, task, contender, mount_report)
 
-            verdict, git_diff = evaluate_sandbox(handle, task)
+            verdict, git_diff = evaluate_sandbox(
+                handle,
+                task,
+                agent_timed_out=bool(exec_outcome and exec_outcome.timed_out),
+                reaped_descendant_pids=list(exec_outcome.reaped_descendant_pids) if exec_outcome else [],
+                unreaped_descendant_pids=list(exec_outcome.unreaped_descendant_pids) if exec_outcome else [],
+            )
             steps.append(
                 TrajectoryStep(
                     step_index=len(steps) + 1,
                     timestamp_ms=usage.total_latency_ms + 45,
                     kind="verify",
-                    summary=f"Deterministic Grader -> {'PASS' if verdict.passed else 'FAIL'}",
+                    summary=(
+                        ("[SIMULATED] " if is_simulated else "")
+                        + f"Deterministic Grader -> {'PASS' if verdict.passed else 'FAIL'}"
+                    ),
                     detail=verdict.summary,
                     latency_ms=45,
                 )
@@ -134,6 +211,7 @@ class HarnessDriver:
                 git_diff=git_diff,
                 started_at=started_at,
                 finished_at=finished_at,
+                is_simulated=is_simulated,
             )
         finally:
             self.pool.release(handle)
@@ -145,11 +223,12 @@ class HarnessDriver:
         contender: ContenderConfig,
         mount_report: SkillMountReport,
     ):
+        base_cli = contender.cli.split(":", 1)[0]
         upstream = self.upstream_api_url
         if upstream is None:
-            if contender.cli == "claude":
+            if base_cli == "claude":
                 upstream = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-            elif contender.cli == "codex":
+            elif base_cli == "codex":
                 upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
 
         proxy = LoopbackWireTapProxy(upstream_base_url=upstream, default_model=contender.model)
@@ -157,18 +236,23 @@ class HarnessDriver:
         t0 = time.perf_counter()
         try:
             env = dict(mount_report.isolated_env_vars)
-            if upstream and "anthropic" in upstream:
+            if base_cli == "claude" and upstream:
                 env["ANTHROPIC_BASE_URL"] = proxy_url
-            elif upstream and "openai" in upstream:
+            elif base_cli == "codex" and upstream:
                 env["OPENAI_BASE_URL"] = f"{proxy_url}/v1"
 
             cmd = build_cli_command(contender, task.prompt)
-            rc, stdout, stderr, timed_out = self.pool.run_bounded_command(
+            outcome = self.pool.run_bounded_command_detailed(
                 cmd,
                 cwd=handle.root,
                 env=env,
                 timeout_sec=task.timeout_sec,
+                reap_sandbox_cwd=True,
             )
+            rc = outcome.returncode
+            stdout = outcome.stdout
+            stderr = outcome.stderr
+            timed_out = outcome.timed_out
             wall_ms = int((time.perf_counter() - t0) * 1000)
             usage, turn_records = proxy.summarize(injected_skill_tokens_est=mount_report.estimated_tokens)
             if usage.total_latency_ms == 0:
@@ -193,29 +277,34 @@ class HarnessDriver:
                         kind="tool_call",
                         summary=f"API Turn #{rec.turn_index} ({rec.model})",
                         detail=f"Endpoint {rec.endpoint} | prompt={rec.prompt_tokens} (cached={rec.cached_tokens}), out={rec.completion_tokens}",
-                        prompt_tokens=rec.prompt_tokens,
-                        cached_tokens=rec.cached_tokens,
-                        completion_tokens=rec.completion_tokens,
+                        prompt_tokens=rec.prompt_tokens or 0,
+                        cached_tokens=rec.cached_tokens or 0,
+                        completion_tokens=rec.completion_tokens or 0,
                         latency_ms=rec.latency_ms,
-                        cost_usd=rec.cost_usd,
+                        cost_usd=rec.cost_usd or 0.0,
                     )
                 )
             tail = (stdout or stderr or "").strip()[-900:]
+            reap_suffix = ""
+            if outcome.reaped_descendant_pids:
+                reap_suffix = f" [reaped detached PIDs: {outcome.reaped_descendant_pids}]"
+            if outcome.unreaped_descendant_pids:
+                reap_suffix += f" [UNREAPED orphan PIDs: {outcome.unreaped_descendant_pids}]"
             steps.append(
                 TrajectoryStep(
                     step_index=len(steps) + 1,
                     timestamp_ms=wall_ms,
                     kind="thought",
-                    summary=f"CLI exited with code {rc}" + (" (TIMED OUT)" if timed_out else ""),
+                    summary=f"CLI exited with code {rc}" + (" (TIMED OUT)" if timed_out else "") + reap_suffix,
                     detail=tail or "Completed headless execution.",
                     latency_ms=wall_ms,
                 )
             )
-            return usage, steps
+            return usage, steps, outcome
         finally:
             proxy.stop()
 
-    def _execute_mock_contender(
+    def _execute_simulated_contender(
         self,
         handle: SandboxHandle,
         task: TaskSpec,
@@ -267,7 +356,9 @@ class HarnessDriver:
                     resp.read()
 
             usage, records = proxy.summarize(injected_skill_tokens_est=skill_tax)
-            # Assign realistic deterministic multi-second telemetry timing for replay inspection
+            usage.is_simulated = True
+            usage.usage_status = "simulated"
+            # Assign deterministic synthetic timing for simulator replay inspection
             synth_latencies = [1420 + (seed_int % 380) for _ in records]
             if mode != "skilled":
                 synth_latencies = [2180 + (seed_int % 520) for _ in records]
@@ -277,14 +368,14 @@ class HarnessDriver:
             steps: list[TrajectoryStep] = []
             elapsed = 0
             if skill_tax > 0:
-                skill_names = ", ".join(mount_report.mounted_skill_names) or "domain-pack"
+                skill_names = ", ".join(mount_report.mounted_skill_names) or "synthetic-pack"
                 steps.append(
                     TrajectoryStep(
                         step_index=1,
                         timestamp_ms=25,
                         kind="skill_mount",
-                        summary=f"Loaded SKILL.md ({skill_names})",
-                        detail=f"Turn-1 context overhead: +{skill_tax} tokens mounted into .agents/skills/.",
+                        summary=f"[SIMULATED] Loaded synthetic profile ({skill_names})",
+                        detail=f"[SIMULATED] Synthetic Turn-1 context delta: +{skill_tax} tokens.",
                         prompt_tokens=skill_tax,
                     )
                 )
@@ -299,12 +390,12 @@ class HarnessDriver:
                         step_index=len(steps) + 1,
                         timestamp_ms=920,
                         kind="file_patch",
-                        summary=f"Modified protected test {task.protected_test_paths[0]}",
+                        summary=f"[SIMULATED] Modified protected test {task.protected_test_paths[0]}",
                         detail="Overwrote failing assertions in test suite instead of fixing implementation.",
-                        prompt_tokens=records[0].prompt_tokens,
-                        completion_tokens=records[0].completion_tokens,
+                        prompt_tokens=int(records[0].prompt_tokens or 0),
+                        completion_tokens=int(records[0].completion_tokens or 0),
                         latency_ms=synth_latencies[0],
-                        cost_usd=records[0].cost_usd,
+                        cost_usd=float(records[0].cost_usd or 0.0),
                     )
                 )
                 return usage, steps
@@ -348,13 +439,13 @@ class HarnessDriver:
                         step_index=len(steps) + 1,
                         timestamp_ms=elapsed,
                         kind=kind,
-                        summary=summ,
+                        summary=f"[SIMULATED] {summ}",
                         detail=det,
-                        prompt_tokens=rec.prompt_tokens,
-                        cached_tokens=rec.cached_tokens,
-                        completion_tokens=rec.completion_tokens,
+                        prompt_tokens=int(rec.prompt_tokens or 0),
+                        cached_tokens=int(rec.cached_tokens or 0),
+                        completion_tokens=int(rec.completion_tokens or 0),
                         latency_ms=lat,
-                        cost_usd=rec.cost_usd,
+                        cost_usd=float(rec.cost_usd or 0.0),
                     )
                 )
             return usage, steps

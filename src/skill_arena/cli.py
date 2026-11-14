@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 import uuid
 
@@ -19,7 +20,7 @@ from skill_arena.i18n import (
     resolve_lang,
 )
 from skill_arena.models import ContenderConfig, TaskSpec
-from skill_arena.runners.harness_driver import HarnessDriver
+from skill_arena.runners.harness_driver import HarnessDriver, validate_simulation_inputs
 from skill_arena.sandbox.worktree_pool import WorktreeSandboxPool
 from skill_arena.store.arena_db import ArenaDatabase
 from skill_arena.studio.server import create_studio_server
@@ -52,13 +53,28 @@ def run_ab_experiment(
     experiment_id: str | None = None,
     quiet: bool = False,
     lang: str = "en",
+    allow_unisolated_host_home: bool = False,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
-    db.create_experiment(exp_id, title=title, suite_name=suite_name, k_reps=k_reps, contenders=contenders)
+    is_sim_exp = any(c.cli.split(":", 1)[0] == "simulate" for c in contenders)
+    db.create_experiment(
+        exp_id,
+        title=title,
+        suite_name=suite_name,
+        k_reps=k_reps,
+        contenders=contenders,
+        is_simulated=is_sim_exp,
+    )
 
     is_zh = lang == "zh"
+    if not quiet and is_sim_exp:
+        if is_zh:
+            print("[SIMULATED / 模拟数据] 合成管线校准运行 - 未调用任何真实模型或外部技能包。")
+        else:
+            print("[SIMULATED] Synthetic pipeline calibration run - no real model or external SKILL.md was invoked.")
+
     pool = WorktreeSandboxPool()
-    driver = HarnessDriver(pool)
+    driver = HarnessDriver(pool, allow_unisolated_host_home=allow_unisolated_host_home)
     try:
         for task in tasks:
             for contender in contenders:
@@ -66,17 +82,24 @@ def run_ab_experiment(
                     result = driver.run_trial(exp_id, task, contender, rep_index=rep)
                     db.record_trial(result)
                     if not quiet:
+                        cost_txt = (
+                            f"${result.usage.total_cost_usd:.4f}"
+                            if (result.usage.is_metered and result.usage.total_cost_usd is not None)
+                            else ("未计量" if is_zh else "Unmetered")
+                        )
                         if is_zh:
+                            sim_tag = "[SIMULATED / 模拟数据] " if result.is_simulated else ""
                             badge = "通过" if result.passed else "失败"
                             print(
-                                f"[{badge}] {task.task_id} | {contender.label} (第 {rep}/{k_reps} 轮) "
-                                f"| ${result.usage.total_cost_usd:.4f} | {result.usage.total_latency_ms}ms"
+                                f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (第 {rep}/{k_reps} 轮) "
+                                f"| {cost_txt} | {result.usage.total_latency_ms}ms"
                             )
                         else:
+                            sim_tag = "[SIMULATED] " if result.is_simulated else ""
                             badge = "PASS" if result.passed else "FAIL"
                             print(
-                                f"[{badge}] {task.task_id} | {contender.label} (rep {rep}/{k_reps}) "
-                                f"| ${result.usage.total_cost_usd:.4f} | {result.usage.total_latency_ms}ms"
+                                f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (rep {rep}/{k_reps}) "
+                                f"| {cost_txt} | {result.usage.total_latency_ms}ms"
                             )
     finally:
         pool.close()
@@ -86,44 +109,66 @@ def run_ab_experiment(
 def _print_comparison_table(report: dict, lang: str = "en") -> None:
     is_zh = lang == "zh"
     k_reps = int(report.get("k_reps", 3))
+    is_sim = bool(report.get("is_simulated"))
     if is_zh:
+        if is_sim:
+            print("\n[SIMULATED / 模拟数据] 提示：以下数字由内置合成模拟器生成，不代表任何真实模型或技能的表现。")
         print(f"\n=== {report['title']}（实验编号：{report['experiment_id']}）===")
         hdr = (
-            f"{pad_cell('参赛组别', 32)} {pad_cell('角色', 8)} "
-            f"{pad_cell('BT Elo', 8, 'right')} {pad_cell('Pass@1', 8, 'right')} "
+            f"{pad_cell('参赛组别', 34)} {pad_cell('角色', 8)} "
+            f"{pad_cell('胜率Elo', 9, 'right')} {pad_cell('Pass@1', 8, 'right')} "
             f"{pad_cell(f'Pass^{k_reps}', 8, 'right')} {pad_cell('单次成功成本', 12, 'right')} "
-            f"{pad_cell('首轮增量', 14, 'right')} {pad_cell('防作弊率', 10, 'right')}"
+            f"{pad_cell('首轮上下文税', 14, 'right')} {pad_cell('防作弊率', 10, 'right')}"
         )
         print(hdr)
-        print("-" * 107)
+        print("-" * 110)
         for row in report["leaderboard"]:
-            cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
-            delta = f"{row['context_overhead_delta_tokens']:+d} tok"
+            metered = bool(row.get("is_metered", True))
+            if not metered:
+                cps = "未计量"
+                delta = "未计量"
+            else:
+                cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
+                ovh_val = row.get("context_overhead_delta_tokens")
+                delta = f"{int(ovh_val):+d} tok" if ovh_val is not None else "未计量"
             role_disp = ROLE_ZH.get(row["role"], row["role"])
             elo_str = str(row.get("elo_rating", 1500))
             print(
-                f"{pad_cell(str(row['label'])[:31], 32)} {pad_cell(role_disp, 8)} "
-                f"{elo_str:>8} {row['pass_at_1'] * 100:7.1f}% "
-                f"{row['pass_hat_k'] * 100:7.1f}% {cps:>12} {delta:>14} "
+                f"{pad_cell(str(row['label'])[:33], 34)} {pad_cell(role_disp, 8)} "
+                f"{elo_str:>9} {row['pass_at_1'] * 100:7.1f}% "
+                f"{row['pass_hat_k'] * 100:7.1f}% {pad_cell(cps, 12, 'right')} {pad_cell(delta, 14, 'right')} "
                 f"{row['anti_cheat_integrity_rate'] * 100:9.1f}%"
             )
+        print("指标说明：胜率Elo = 成对胜率换算的 Elo（双组）；首轮上下文税 = 实验组与对照组首轮输入 Token 均值之差。")
         return
 
+    if is_sim:
+        print("\n[SIMULATED] Notice: Synthetic calibration numbers only - does not reflect any real model or skill.")
     print(f"\n=== {report['title']} ({report['experiment_id']}) ===")
     print(
-        f"{'Contender':<32} {'Role':<10} {'BT Elo':>7} {'Pass@1':>8} {f'Pass^{k_reps}':>8} "
-        f"{'Cost/Succ':>11} {'Turn-1 Delta':>14} {'Integrity':>10}"
+        f"{'Contender':<34} {'Role':<10} {'WR Elo':>7} {'Pass@1':>8} {f'Pass^{k_reps}':>8} "
+        f"{'Cost/Succ':>11} {'Turn-1 Tax':>14} {'Integrity':>10}"
     )
-    print("-" * 106)
+    print("-" * 108)
     for row in report["leaderboard"]:
-        cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
-        delta = f"{row['context_overhead_delta_tokens']:+d} tok"
+        metered = bool(row.get("is_metered", True))
+        if not metered:
+            cps = "Unmetered"
+            delta = "Unmetered"
+        else:
+            cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
+            ovh_val = row.get("context_overhead_delta_tokens")
+            delta = f"{int(ovh_val):+d} tok" if ovh_val is not None else "Unmetered"
         elo_str = str(row.get("elo_rating", 1500))
         print(
-            f"{row['label'][:31]:<32} {row['role']:<10} {elo_str:>7} "
+            f"{row['label'][:33]:<34} {row['role']:<10} {elo_str:>7} "
             f"{row['pass_at_1'] * 100:7.1f}% {row['pass_hat_k'] * 100:7.1f}% "
             f"{cps:>11} {delta:>14} {row['anti_cheat_integrity_rate'] * 100:9.1f}%"
         )
+    print(
+        "Metrics: WR Elo = Win-Rate Derived Elo (2-arm); "
+        "Turn-1 Tax = Mean Turn-1 input token delta (treatment minus baseline)."
+    )
 
 
 def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:
@@ -138,7 +183,7 @@ def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skill-arena",
-        description="Scientific Git-worktree A/B benchmark harness for coding agents and SKILL.md rules.",
+        description="Controlled Git-worktree A/B benchmark harness for coding agents and SKILL.md rules.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
@@ -157,13 +202,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="Run a controlled Control vs Treatment A/B benchmark.")
     _add_subparser_lang_arg(p_run)
     p_run.add_argument("--suite", default="builtin-8", help="Suite name, category, or TaskSpec JSON file.")
-    p_run.add_argument("--cli", default="mock", help="Agent CLI (claude, codex, opencode, vibe, agy, mock).")
-    p_run.add_argument("--model", default="claude-sonnet-4-5", help="Model identifier.")
+    p_run.add_argument(
+        "--cli",
+        default="simulate",
+        help="Agent CLI (simulate, claude, codex, opencode, vibe, agy).",
+    )
+    p_run.add_argument(
+        "--model",
+        default=None,
+        help="Model identifier (defaults to synthetic-sim-model for simulate, claude-sonnet-4-5 for real CLIs).",
+    )
     p_run.add_argument("--skill", action="append", default=[], help="Path to SKILL.md or skill folder for Treatment.")
     p_run.add_argument("--reps", type=int, default=3, help="Isolated repetitions k per task (default: 3).")
-    p_run.add_argument("--title", default="Control vs SKILL.md A/B Evaluation", help="Experiment title.")
+    p_run.add_argument("--title", default=None, help="Experiment title.")
     p_run.add_argument("--db", default=".skill-arena/arena.sqlite", help="SQLite database path.")
     p_run.add_argument("--html-out", default=None, help="Optional path to export single-file HTML report.")
+    p_run.add_argument(
+        "--allow-unisolated-host-home",
+        action="store_true",
+        help=(
+            "Explicitly acknowledge that M0 launches real agent CLIs in the host HOME directory "
+            "with permission prompts skipped (--dangerously-skip-permissions / --full-auto)."
+        ),
+    )
 
     p_comp = sub.add_parser("compare", help="Print leaderboard summary for an existing experiment.")
     _add_subparser_lang_arg(p_comp)
@@ -178,11 +239,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_html.add_argument("--out", required=True, help="Destination HTML path.")
     p_html.add_argument("--default-view", choices=["scoreboard", "replay"], default="scoreboard")
 
-    p_ext = sub.add_parser("extract-commit", help="Extract a leak-free TaskSpec JSON from a git bug-fix commit.")
+    p_ext = sub.add_parser(
+        "extract-commit",
+        help="Extract a TaskSpec JSON from a git bug-fix commit without commit-message hints.",
+    )
     _add_subparser_lang_arg(p_ext)
     p_ext.add_argument("--repo", default=".", help="Path to git repository.")
     p_ext.add_argument("--commit", default="HEAD", help="Git commit SHA or ref.")
-    p_ext.add_argument("--test-cmd", default=None, help="Override test command.")
+    p_ext.add_argument("--test-cmd", default=None, help="Explicit test command override.")
     p_ext.add_argument("--out", default=None, help="Optional path to save extracted TaskSpec JSON.")
 
     p_studio = sub.add_parser("studio", help="Start interactive SkillArena Web Studio.")
@@ -213,44 +277,106 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
-        db = ArenaDatabase(args.db)
-        tasks = _load_tasks(args.suite)
-        ctrl_cli = "mock:baseline" if args.cli == "mock" else args.cli
-        treat_cli = "mock:skilled" if args.cli == "mock" else args.cli
-        skill_label = (
-            "+ " + ", ".join(Path(s).stem if Path(s).stem.upper() != "SKILL" else Path(s).parent.name for s in args.skill)
-            if args.skill
-            else "+ Curated Engineering Skills"
-        )
-        contenders = [
-            ContenderConfig(
-                contender_id="arm_control",
-                label=f"{args.cli} ({args.model} · No Skill)",
-                role="control",
-                cli=ctrl_cli,
-                model=args.model,
-                skill_paths=[],
-                strip_default_skills=True,
-            ),
-            ContenderConfig(
-                contender_id="arm_treatment",
-                label=f"{args.cli} ({args.model} {skill_label})",
-                role="treatment",
-                cli=treat_cli,
-                model=args.model,
-                skill_paths=list(args.skill),
-                strip_default_skills=True,
-            ),
-        ]
-        exp_id = run_ab_experiment(
-            db=db,
-            title=args.title,
-            suite_name=args.suite,
-            tasks=tasks,
-            contenders=contenders,
-            k_reps=args.reps,
-            lang=lang,
-        )
+        raw_cli = str(args.cli).strip()
+        base_cli = raw_cli.split(":", 1)[0]
+        if base_cli == "mock":
+            msg = (
+                "错误：`--cli mock` 已移除并更名为 `--cli simulate`（输出均带 [SIMULATED / 模拟数据] 标记）。"
+                if is_zh
+                else "Error: `--cli mock` has been removed and renamed to `--cli simulate` (all outputs carry [SIMULATED] markers)."
+            )
+            print(msg, file=sys.stderr)
+            return 2
+
+        is_sim_cli = base_cli == "simulate"
+        if is_sim_cli:
+            eff_model = args.model or "synthetic-sim-model"
+            eff_title = args.title or "[SIMULATED] Synthetic Pipeline Calibration"
+            try:
+                validate_simulation_inputs(
+                    model=eff_model,
+                    title=eff_title,
+                    skill_paths=list(args.skill),
+                )
+            except ValueError as exc:
+                print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
+                return 2
+            ctrl_cli = "simulate:baseline" if raw_cli == "simulate" else raw_cli
+            treat_cli = "simulate:skilled" if raw_cli == "simulate" else raw_cli
+            ctrl_label = f"[SIMULATED] {eff_model} (Baseline · No Skill)"
+            treat_label = f"[SIMULATED] {eff_model} (+ Synthetic Skill Pack)"
+        else:
+            if not args.allow_unisolated_host_home:
+                msg = (
+                    f"错误：未指定 `--allow-unisolated-host-home`，已拒绝启动真实智能体 CLI '{raw_cli}'。"
+                    "当前 M0 版本会在真实用户 HOME 目录下（可访问 ~/.claude 与 ~/.agents/skills）"
+                    "以跳过权限确认模式（--dangerously-skip-permissions / --full-auto）运行。"
+                    "如确认知晓风险，请显式传入 `--allow-unisolated-host-home`。"
+                    if is_zh
+                    else (
+                        f"Error: Refusing to launch real agent CLI '{raw_cli}' without `--allow-unisolated-host-home`. "
+                        "In M0, SkillArena runs the agent in your real HOME directory (where ~/.claude and "
+                        "~/.agents/skills are visible and writable) with skipped permission prompts "
+                        "(--dangerously-skip-permissions / --full-auto). Pass `--allow-unisolated-host-home` to proceed."
+                    )
+                )
+                print(msg, file=sys.stderr)
+                return 2
+            eff_model = args.model or "claude-sonnet-4-5"
+            eff_title = args.title or "Control vs SKILL.md A/B Evaluation"
+            ctrl_cli = raw_cli
+            treat_cli = raw_cli
+            skill_label = (
+                "+ "
+                + ", ".join(
+                    Path(s).stem if Path(s).stem.upper() != "SKILL" else Path(s).parent.name
+                    for s in args.skill
+                )
+                if args.skill
+                else "· Treatment No Skill Mounted"
+            )
+            ctrl_label = f"{raw_cli} ({eff_model} · No Skill)"
+            treat_label = f"{raw_cli} ({eff_model} {skill_label})"
+
+        try:
+            tasks = _load_tasks(args.suite)
+            db = ArenaDatabase(args.db)
+            contenders = [
+                ContenderConfig(
+                    contender_id="arm_control",
+                    label=ctrl_label,
+                    role="control",
+                    cli=ctrl_cli,
+                    model=eff_model,
+                    skill_paths=[],
+                    strip_default_skills=True,
+                    allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                ),
+                ContenderConfig(
+                    contender_id="arm_treatment",
+                    label=treat_label,
+                    role="treatment",
+                    cli=treat_cli,
+                    model=eff_model,
+                    skill_paths=list(args.skill),
+                    strip_default_skills=True,
+                    allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                ),
+            ]
+            exp_id = run_ab_experiment(
+                db=db,
+                title=eff_title,
+                suite_name=args.suite,
+                tasks=tasks,
+                contenders=contenders,
+                k_reps=args.reps,
+                lang=lang,
+                allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+            )
+        except (ValueError, PermissionError) as exc:
+            print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
+            return 2
+
         report = db.build_comparison_report(exp_id)
         _print_comparison_table(report, lang=lang)
         if args.html_out:
@@ -298,7 +424,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "extract-commit":
-        spec = extract_task_from_commit(Path(args.repo), commit_ref=args.commit, test_command=args.test_cmd)
+        try:
+            spec = extract_task_from_commit(
+                Path(args.repo),
+                commit_ref=args.commit,
+                test_command=args.test_cmd,
+            )
+        except (ValueError, subprocess.CalledProcessError) as exc:
+            err_detail = str(exc)
+            if is_zh:
+                print(f"提取 Git 提交失败：{err_detail}", file=sys.stderr)
+            else:
+                print(f"Error extracting commit: {err_detail}", file=sys.stderr)
+            return 2
         rendered = json.dumps(spec.to_dict(), indent=2)
         if args.out:
             out_path = Path(args.out)

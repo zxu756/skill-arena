@@ -59,10 +59,10 @@ def test_anti_cheat_catches_test_tampering(tmp_path: Path) -> None:
     task = load_builtin_suite()[0]
     cheater = ContenderConfig(
         contender_id="arm_cheater",
-        label="Test-Tampering Agent",
+        label="[SIMULATED] Test-Tampering Agent",
         role="treatment",
-        cli="mock:cheater",
-        model="claude-sonnet-4-5",
+        cli="simulate:cheater",
+        model="synthetic-sim-model",
     )
     result = driver.run_trial("exp_cheat", task, cheater, rep_index=1)
     assert not result.anti_cheat_clean
@@ -208,12 +208,24 @@ def test_full_ab_experiment_db_studio_and_html_export(tmp_path: Path) -> None:
     db = ArenaDatabase(tmp_path / "arena.sqlite")
     tasks = load_builtin_suite()[:4]
     contenders = [
-        ContenderConfig(contender_id="ctrl", label="Baseline No-Skill", role="control", cli="mock:baseline"),
-        ContenderConfig(contender_id="treat", label="Treatment + SKILL.md", role="treatment", cli="mock:skilled"),
+        ContenderConfig(
+            contender_id="ctrl",
+            label="[SIMULATED] Baseline Synthetic",
+            role="control",
+            cli="simulate:baseline",
+            model="synthetic-sim-model",
+        ),
+        ContenderConfig(
+            contender_id="treat",
+            label="[SIMULATED] Treatment Synthetic",
+            role="treatment",
+            cli="simulate:skilled",
+            model="synthetic-sim-model",
+        ),
     ]
     exp_id = run_ab_experiment(
         db=db,
-        title="Calibration Benchmark",
+        title="[SIMULATED] Synthetic Calibration",
         suite_name="subset-4",
         tasks=tasks,
         contenders=contenders,
@@ -221,8 +233,10 @@ def test_full_ab_experiment_db_studio_and_html_export(tmp_path: Path) -> None:
         quiet=True,
     )
     report = db.build_comparison_report(exp_id)
+    assert report["is_simulated"] is True
     lb = {r["contender_id"]: r for r in report["leaderboard"]}
     assert lb["treat"]["pass_at_1"] > lb["ctrl"]["pass_at_1"]
+    assert lb["ctrl"]["pass_hat_k"] == 0.0
     assert lb["treat"]["pass_hat_k"] == 1.0
     assert lb["treat"]["context_overhead_delta_tokens"] > 0
 
@@ -294,12 +308,24 @@ def test_cli_and_html_bilingual_zh_en_outputs(tmp_path: Path, capsys, monkeypatc
     db = ArenaDatabase(db_path)
     tasks = load_builtin_suite()[:2]
     contenders = [
-        ContenderConfig(contender_id="ctrl", label="Baseline No Skill", role="control", cli="mock:baseline"),
-        ContenderConfig(contender_id="treat", label="Treatment + Curated Engineering Skills", role="treatment", cli="mock:skilled"),
+        ContenderConfig(
+            contender_id="ctrl",
+            label="[SIMULATED] Baseline No Skill",
+            role="control",
+            cli="simulate:baseline",
+            model="synthetic-sim-model",
+        ),
+        ContenderConfig(
+            contender_id="treat",
+            label="[SIMULATED] Treatment + Synthetic Skill Pack",
+            role="treatment",
+            cli="simulate:skilled",
+            model="synthetic-sim-model",
+        ),
     ]
     exp_id = run_ab_experiment(
         db=db,
-        title="Control vs SKILL.md A/B Evaluation",
+        title="[SIMULATED] Synthetic Pipeline Calibration",
         suite_name="subset-2",
         tasks=tasks,
         contenders=contenders,
@@ -313,14 +339,16 @@ def test_cli_and_html_bilingual_zh_en_outputs(tmp_path: Path, capsys, monkeypatc
     assert "参赛组别" in cmp_zh
     assert "对照组" in cmp_zh
     assert "实验组" in cmp_zh
-    assert "BT Elo" in cmp_zh
+    assert "成对胜率换算的 Elo（双组）" in cmp_zh
+    assert "SIMULATED" in cmp_zh
 
     assert main(["--lang", "en", "compare", "--db", str(db_path), "--exp", exp_id]) == 0
     cmp_en = capsys.readouterr().out
     assert "Contender" in cmp_en
     assert "control" in cmp_en
     assert "treatment" in cmp_en
-    assert "BT Elo" in cmp_en
+    assert "Win-Rate Derived Elo (2-arm)" in cmp_en
+    assert "SIMULATED" in cmp_en
 
     report = db.build_comparison_report(exp_id)
     lb = {r["contender_id"]: r for r in report["leaderboard"]}
@@ -335,7 +363,8 @@ def test_cli_and_html_bilingual_zh_en_outputs(tmp_path: Path, capsys, monkeypatc
     assert "参赛智能体 A/B 排行榜" in html_zh
     assert "逐任务 Worktree 沙盒遥测矩阵" in html_zh
     assert 'data-task-filter="concurrency"' in html_zh
-    assert "BT Elo" in html_zh
+    assert "成对胜率换算的 Elo（双组）" in html_zh
+    assert "SIMULATED" in html_zh
     assert "\u2014" not in html_zh
     assert "\u2013" not in html_zh
 
@@ -344,5 +373,7 @@ def test_cli_and_html_bilingual_zh_en_outputs(tmp_path: Path, capsys, monkeypatc
     assert 'data-default-lang="en"' in html_en
     assert "Contender A/B scoreboard" in html_en
     assert "Dual-track trajectory replay" in html_en
+    assert "Win-Rate Derived Elo (2-arm)" in html_en
+    assert "SIMULATED" in html_en
     assert "\u2014" not in html_en
     assert "\u2013" not in html_en

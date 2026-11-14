@@ -35,26 +35,50 @@ def _fmt_usd(val: float | None) -> str:
     return f"${val:.4f}"
 
 
+def _fmt_cost_cell(val: float | None, is_metered: bool, is_zh: bool) -> str:
+    if not is_metered:
+        return "未计量" if is_zh else "Unmetered"
+    return _fmt_usd(val)
+
+
+def _fmt_ovh_cell(val: int | None, is_metered: bool, is_zh: bool, *, kpi_mode: bool = False) -> str:
+    if not is_metered or val is None:
+        return "未计量" if is_zh else "Unmetered"
+    iv = int(val)
+    if kpi_mode:
+        return f"{iv:+,d} tok"
+    if iv > 0:
+        return f"+{iv:,} tok"
+    if iv < 0:
+        return f"{iv:,} tok"
+    return "0 tok（基线）" if is_zh else "0 tok (baseline)"
+
+
 def _localize_title(raw_title: str, lang: str) -> str:
     if lang != "zh":
         return raw_title
     known = {
-        "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills": (
-            "Claude Sonnet 4.5：无技能基线 对比 精选工程与 Hallmark 技能包"
-        ),
+        "[SIMULATED] Synthetic Pipeline Calibration": "[SIMULATED / 模拟数据] 合成管线校准评测",
         "Control vs SKILL.md A/B Evaluation": "对照组 对比 SKILL.md 技能包 A/B 评测",
         "SkillArena Benchmark Report": "SkillArena 基准评测报告",
     }
-    return known.get(raw_title, raw_title)
+    if raw_title in known:
+        return known[raw_title]
+    if raw_title.startswith("[SIMULATED] ") and "[SIMULATED / 模拟数据]" not in raw_title:
+        return raw_title.replace("[SIMULATED] ", "[SIMULATED / 模拟数据] ", 1)
+    return raw_title
 
 
 def _localize_arm_label(label: str, lang: str) -> str:
     if lang != "zh":
         return label
-    return (
+    out = (
         label.replace("No Skill", "无技能基线")
-        .replace("+ Curated Engineering Skills", "+ 精选工程技能包")
+        .replace("+ Synthetic Skill Pack", "+ 合成技能包")
     )
+    if out.startswith("[SIMULATED] ") and "[SIMULATED / 模拟数据]" not in out:
+        out = out.replace("[SIMULATED] ", "[SIMULATED / 模拟数据] ", 1)
+    return out
 
 
 def render_arena_html(
@@ -89,9 +113,14 @@ def render_arena_html(
     lift_pp = (t_pass1 - c_pass1) * 100.0
     lift_str = f"{lift_pp:+.1f} pp"
 
+    is_simulated_exp = bool(report.get("is_simulated"))
+    c_metered = bool(control.get("is_metered", True))
+    t_metered = bool(treatment.get("is_metered", True))
     c_cps = control.get("cost_per_success_usd")
     t_cps = treatment.get("cost_per_success_usd")
-    overhead_tok = int(treatment.get("context_overhead_delta_tokens", 0))
+    t_ovh = treatment.get("context_overhead_delta_tokens")
+    kpi2_val_str = _fmt_cost_cell(t_cps, t_metered, is_zh)
+    kpi3_val_str = _fmt_ovh_cell(t_ovh, t_metered, is_zh, kpi_mode=True)
     min_integrity = min(
         (float(r.get("anti_cheat_integrity_rate", 1.0)) for r in leaderboard),
         default=1.0,
@@ -101,13 +130,17 @@ def render_arena_html(
     lb_rows_html: list[str] = []
     for row in leaderboard:
         is_treat = row.get("role") == "treatment"
+        row_metered = bool(row.get("is_metered", True))
         badge_cls = "arm-pill-treatment" if is_treat else "arm-pill-control"
         role_txt = ("实验组" if is_treat else "对照组") if is_zh else ("Treatment" if is_treat else "Control")
-        none_txt = "无（已剥离）" if is_zh else "None (stripped)"
+        none_txt = (
+            "工作区未挂载（M0 仍可见宿主全局技能）"
+            if is_zh
+            else "None in workspace (host HOME visible in M0)"
+        )
         skills_txt = ", ".join(row.get("skills_mounted") or []) or none_txt
-        ovh = int(row.get("context_overhead_delta_tokens", 0))
-        base_tok_txt = "0 tok（基线）" if is_zh else "0 tok (baseline)"
-        ovh_txt = f"+{ovh:,} tok" if ovh > 0 else (f"{ovh:,} tok" if ovh < 0 else base_tok_txt)
+        cps_txt = _fmt_cost_cell(row.get("cost_per_success_usd"), row_metered, is_zh)
+        ovh_txt = _fmt_ovh_cell(row.get("context_overhead_delta_tokens"), row_metered, is_zh)
         elo_val = int(row.get("elo_rating", 1500))
         integrity_pct = float(row.get("anti_cheat_integrity_rate", 1.0))
         int_cls = "status-ok" if integrity_pct >= 0.999 else "status-fail"
@@ -129,8 +162,8 @@ def render_arena_html(
               <td class="mono strong">{elo_val}</td>
               <td class="mono strong">{_fmt_pct(float(row.get("pass_at_1", 0.0)))}</td>
               <td class="mono">{_fmt_pct(float(row.get("pass_hat_k", 0.0)))}</td>
-              <td class="mono">{_fmt_usd(row.get("cost_per_success_usd"))}</td>
-              <td class="mono">{ovh_txt}</td>
+              <td class="mono">{html.escape(cps_txt)}</td>
+              <td class="mono">{html.escape(ovh_txt)}</td>
               <td class="mono">{float(row.get("median_latency_ms", 0)) / 1000.0:.2f}s</td>
               <td class="mono {int_cls}">{_fmt_pct(integrity_pct)}</td>
             </tr>
@@ -159,6 +192,10 @@ def render_arena_html(
         t_cls = "verdict-pass" if t_p == t_tot and t_tot > 0 else ("verdict-flaky" if t_p > 0 else "verdict-fail")
 
         pass_word = "通过" if is_zh else "pass"
+        c_arm_metered = bool(c_arm.get("is_metered", True)) and c_arm.get("mean_cost_usd") is not None
+        t_arm_metered = bool(t_arm.get("is_metered", True)) and t_arm.get("mean_cost_usd") is not None
+        c_cost_str = f"${float(c_arm['mean_cost_usd']):.4f}" if c_arm_metered else ("未计量" if is_zh else "Unmetered")
+        t_cost_str = f"${float(t_arm['mean_cost_usd']):.4f}" if t_arm_metered else ("未计量" if is_zh else "Unmetered")
         delta_val = t_p - c_p
         if delta_val > 0:
             gain_txt = f"+{delta_val}/{t_tot} 净提升" if is_zh else f"+{delta_val}/{t_tot} gain"
@@ -181,8 +218,8 @@ def render_arena_html(
                 <div class="task-title-text">{html.escape(ttitle)}</div>
                 <div class="task-cat-text">{html.escape(domain_line)}</div>
               </td>
-              <td class="mono"><span class="verdict-pill {c_cls}">{c_p}/{c_tot} {pass_word}</span> · ${float(c_arm.get("mean_cost_usd", 0.0)):.4f}</td>
-              <td class="mono"><span class="verdict-pill {t_cls}">{t_p}/{t_tot} {pass_word}</span> · ${float(t_arm.get("mean_cost_usd", 0.0)):.4f}</td>
+              <td class="mono"><span class="verdict-pill {c_cls}">{c_p}/{c_tot} {pass_word}</span> · {html.escape(c_cost_str)}</td>
+              <td class="mono"><span class="verdict-pill {t_cls}">{t_p}/{t_tot} {pass_word}</span> · {html.escape(t_cost_str)}</td>
               <td class="mono">{delta_badge}</td>
               <td>
                 <button type="button" class="inspect-btn" data-replay-index="{idx}">{btn_inspect}</button>
@@ -199,6 +236,12 @@ def render_arena_html(
     replay_active = "is-active" if default_view == "replay" else ""
     score_hidden = "hidden" if default_view == "replay" else ""
     replay_hidden = "" if default_view == "replay" else "hidden"
+    sim_banner_hidden = "" if is_simulated_exp else "hidden"
+    sim_banner_txt = (
+        "[SIMULATED / 模拟数据] 仅为合成管线校准演示数据 - 未调用任何真实模型或外部 SKILL.md。"
+        if is_zh
+        else "[SIMULATED] Synthetic calibration data only - no real model or external SKILL.md was executed."
+    )
 
     zh_active = "is-active" if is_zh else ""
     en_active = "" if is_zh else "is-active"
@@ -235,17 +278,18 @@ def render_arena_html(
         if is_zh
         else f"Control {_fmt_pct(c_pass1)} vs Treatment {_fmt_pct(t_pass1)}"
     )
+    c_cps_disp = _fmt_cost_cell(c_cps, c_metered, is_zh)
     kpi2_lbl = "单次成功真实摊销成本" if is_zh else "True cost per success"
     kpi2_foot = (
-        f"对照组摊销：{_fmt_usd(c_cps)}（含失败重试损耗）"
+        f"对照组摊销：{c_cps_disp}（含失败重试损耗）"
         if is_zh
-        else f"Control amortized: {_fmt_usd(c_cps)} (failed retries included)"
+        else f"Control amortized: {c_cps_disp} (failed retries included)"
     )
-    kpi3_lbl = "首轮技能上下文税" if is_zh else "Turn-1 skill context tax"
+    kpi3_lbl = "首轮上下文税" if is_zh else "Turn-1 Context Tax"
     kpi3_foot = (
-        "首次请求注入的 SKILL.md 提示词增量"
+        "实验组与对照组首轮输入 Token 均值之差"
         if is_zh
-        else "Prompt delta injected on initial request"
+        else "Mean Turn-1 input token delta (treatment minus baseline)"
     )
     kpi4_lbl = "防作弊测试完整性" if is_zh else "Anti-cheat test integrity"
     kpi4_foot = (
@@ -256,17 +300,17 @@ def render_arena_html(
 
     sb_heading = "参赛智能体 A/B 排行榜" if is_zh else "Contender A/B scoreboard"
     sb_note = (
-        f"Bradley-Terry Elo 与 Pass^{k_reps}（单任务需连续 {k_reps}/{k_reps} 次全绿通过）"
+        f"成对胜率换算的 Elo（双组）与 Pass^{k_reps}（单任务需连续 {k_reps}/{k_reps} 次全绿通过）"
         if is_zh
-        else f"Bradley-Terry Elo & Pass^{k_reps} ({k_reps}/{k_reps} consecutive clean passes per task)"
+        else f"Win-Rate Derived Elo (2-arm) & Pass^{k_reps} ({k_reps}/{k_reps} consecutive clean passes per task)"
     )
     th_arm = "参赛组别" if is_zh else "Contender arm"
     th_skill = "挂载技能" if is_zh else "Mounted SKILL.md"
-    th_elo = "BT Elo"
+    th_elo = "胜率换算 Elo" if is_zh else "Win-Rate Elo (2-arm)"
     th_pass1 = "Pass@1"
     th_passk = f"Pass^{k_reps} 稳健率" if is_zh else f"Pass^{k_reps} consistency"
     th_cps = "单次成功成本" if is_zh else "Cost / success"
-    th_delta = "首轮上下文增量" if is_zh else "Turn-1 context delta"
+    th_delta = "首轮上下文税" if is_zh else "Turn-1 Context Tax"
     th_lat = "中位耗时" if is_zh else "Median latency"
     th_int = "防作弊完整性" if is_zh else "Test integrity"
 
@@ -813,6 +857,16 @@ def render_arena_html(
       white-space: pre;
     }}
 
+    .sim-banner {{
+      padding: 12px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--arm-amber);
+      background: var(--arm-amber-soft);
+      color: var(--arm-amber);
+      font-weight: 700;
+      font-size: 13px;
+    }}
+
     @media (max-width: 960px) {{
       .kpi-strip {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .dual-grid {{ grid-template-columns: 1fr; }}
@@ -844,6 +898,8 @@ def render_arena_html(
   </header>
 
   <main class="page-shell">
+    <section class="sim-banner mono" id="sim-banner" {sim_banner_hidden}>{html.escape(sim_banner_txt)}</section>
+
     <section class="exp-banner">
       <div>
         <h1 id="exp-title">{html.escape(disp_title)}</h1>
@@ -860,12 +916,12 @@ def render_arena_html(
       </div>
       <div class="kpi-cell">
         <div class="kpi-label" id="kpi2-lbl">{html.escape(kpi2_lbl)}</div>
-        <div class="kpi-val mono tone-ctrl" id="kpi2-val">{_fmt_usd(t_cps)}</div>
+        <div class="kpi-val mono tone-ctrl" id="kpi2-val">{html.escape(kpi2_val_str)}</div>
         <div class="kpi-foot mono" id="kpi2-foot">{html.escape(kpi2_foot)}</div>
       </div>
       <div class="kpi-cell">
         <div class="kpi-label" id="kpi3-lbl">{html.escape(kpi3_lbl)}</div>
-        <div class="kpi-val mono tone-amber" id="kpi3-val">{overhead_tok:+,d} tok</div>
+        <div class="kpi-val mono tone-amber" id="kpi3-val">{html.escape(kpi3_val_str)}</div>
         <div class="kpi-foot mono" id="kpi3-foot">{html.escape(kpi3_foot)}</div>
       </div>
       <div class="kpi-cell">
@@ -985,6 +1041,7 @@ def render_arena_html(
         en: {{
           docTitlePrefix: "SkillArena Telemetry: ",
           brandSub: "Git-worktree A/B benchmark & wire-tap token telemetry",
+          simBanner: "[SIMULATED] Synthetic calibration data only - no real model or external SKILL.md was executed.",
           tabScore: "Scoreboard & economics",
           tabReplay: "Dual-track trajectory replay",
           themeToDark: "Switch telemetry theme",
@@ -992,23 +1049,24 @@ def render_arena_html(
           graderNote: "Zero-LLM deterministic unit + Hallmark craft + SHA-256 anti-cheat graders",
           kpi1Lbl: "Treatment Pass@1 lift",
           kpi2Lbl: "True cost per success",
-          kpi3Lbl: "Turn-1 skill context tax",
-          kpi3Foot: "Prompt delta injected on initial request",
+          kpi3Lbl: "Turn-1 Context Tax",
+          kpi3Foot: "Mean Turn-1 input token delta (treatment minus baseline)",
           kpi4Lbl: "Anti-cheat test integrity",
           kpi4Foot: "Protected test SHA-256 verified post-run",
           sbHeading: "Contender A/B scoreboard",
           thArm: "Contender arm",
           thSkill: "Mounted SKILL.md",
-          thElo: "BT Elo",
+          thElo: "Win-Rate Elo (2-arm)",
           thPass1: "Pass@1",
           thCps: "Cost / success",
-          thDelta: "Turn-1 context delta",
+          thDelta: "Turn-1 Context Tax",
           thLat: "Median latency",
           thInt: "Test integrity",
           roleControl: "Control",
           roleTreatment: "Treatment",
-          noneStripped: "None (stripped)",
+          noneStripped: "None in workspace (host HOME visible in M0)",
           zeroBaseline: "0 tok (baseline)",
+          unmetered: "Unmetered",
           matHeading: "Task-by-task worktree telemetry matrix",
           fAll: "All",
           fGains: "Skill gains",
@@ -1036,7 +1094,7 @@ def render_arena_html(
           passExit0: "PASS (exit 0)",
           failBadge: "FAIL",
           turn1Lbl: "Turn-1: ",
-          totalLbl: "Total: $",
+          totalCostLbl: "Total: ",
           latLbl: "Latency: ",
           graderSum: "Grader summary: ",
           noDiff: "(No implementation lines modified)",
@@ -1052,6 +1110,7 @@ def render_arena_html(
         zh: {{
           docTitlePrefix: "SkillArena 遥测看板：",
           brandSub: "Git Worktree 隔离沙盒 A/B 评测与流量监听遥测",
+          simBanner: "[SIMULATED / 模拟数据] 仅为合成管线校准演示数据 - 未调用任何真实模型或外部 SKILL.md。",
           tabScore: "排行榜与成本效能",
           tabReplay: "双轨轨迹与补丁回放",
           themeToDark: "深色遥测主题",
@@ -1059,23 +1118,24 @@ def render_arena_html(
           graderNote: "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验",
           kpi1Lbl: "实验组 Pass@1 净提升",
           kpi2Lbl: "单次成功真实摊销成本",
-          kpi3Lbl: "首轮技能上下文税",
-          kpi3Foot: "首次请求注入的 SKILL.md 提示词增量",
+          kpi3Lbl: "首轮上下文税",
+          kpi3Foot: "实验组与对照组首轮输入 Token 均值之差",
           kpi4Lbl: "防作弊测试完整性",
           kpi4Foot: "受保护测试文件运行后 SHA-256 校验通过",
           sbHeading: "参赛智能体 A/B 排行榜",
           thArm: "参赛组别",
           thSkill: "挂载技能",
-          thElo: "BT Elo",
+          thElo: "胜率换算 Elo",
           thPass1: "Pass@1",
           thCps: "单次成功成本",
-          thDelta: "首轮上下文增量",
+          thDelta: "首轮上下文税",
           thLat: "中位耗时",
           thInt: "防作弊完整性",
           roleControl: "对照组",
           roleTreatment: "实验组",
-          noneStripped: "无（已剥离）",
+          noneStripped: "工作区未挂载（M0 仍可见宿主全局技能）",
           zeroBaseline: "0 tok（基线）",
+          unmetered: "未计量",
           matHeading: "逐任务 Worktree 沙盒遥测矩阵",
           fAll: "全部",
           fGains: "技能净胜",
@@ -1103,7 +1163,7 @@ def render_arena_html(
           passExit0: "通过 (exit 0)",
           failBadge: "失败",
           turn1Lbl: "首轮：",
-          totalLbl: "总计：$",
+          totalCostLbl: "总计：",
           latLbl: "耗时：",
           graderSum: "判分摘要：",
           noDiff: "（未修改任何实现代码行）",
@@ -1133,23 +1193,49 @@ def render_arena_html(
         return val === null || val === undefined ? "n/a" : ("$" + Number(val).toFixed(4));
       }}
 
+      function fmtCostCell(val, isMetered) {{
+        const t = I18N[currentLang];
+        if (isMetered === false) return t.unmetered;
+        return fmtUsd(val);
+      }}
+
+      function fmtOvhCell(val, isMetered, kpiMode) {{
+        const t = I18N[currentLang];
+        if (isMetered === false || val === null || val === undefined) return t.unmetered;
+        const iv = Number(val);
+        if (kpiMode) {{
+          return (iv >= 0 ? "+" : "") + iv.toLocaleString("en-US") + " tok";
+        }}
+        if (iv > 0) return "+" + iv.toLocaleString("en-US") + " tok";
+        if (iv < 0) return iv.toLocaleString("en-US") + " tok";
+        return t.zeroBaseline;
+      }}
+
       function localizeExpTitle(raw) {{
         if (currentLang !== "zh") return raw;
         const map = {{
-          "Claude Sonnet 4.5: Baseline vs Curated Engineering & Hallmark Skills":
-            "Claude Sonnet 4.5：无技能基线 对比 精选工程与 Hallmark 技能包",
+          "[SIMULATED] Synthetic Pipeline Calibration": "[SIMULATED / 模拟数据] 合成管线校准评测",
           "Control vs SKILL.md A/B Evaluation": "对照组 对比 SKILL.md 技能包 A/B 评测",
           "SkillArena Benchmark Report": "SkillArena 基准评测报告"
         }};
-        return map[raw] || raw;
+        if (map[raw]) return map[raw];
+        const s = String(raw || "");
+        if (s.startsWith("[SIMULATED] ") && !s.includes("[SIMULATED / 模拟数据]")) {{
+          return s.replace("[SIMULATED] ", "[SIMULATED / 模拟数据] ");
+        }}
+        return s;
       }}
 
       function localizeArmLabel(lbl) {{
         const s = String(lbl || "");
         if (currentLang !== "zh") return s;
-        return s
+        let out = s
           .replace("No Skill", "无技能基线")
-          .replace("+ Curated Engineering Skills", "+ 精选工程技能包");
+          .replace("+ Synthetic Skill Pack", "+ 合成技能包");
+        if (out.startsWith("[SIMULATED] ") && !out.includes("[SIMULATED / 模拟数据]")) {{
+          out = out.replace("[SIMULATED] ", "[SIMULATED / 模拟数据] ");
+        }}
+        return out;
       }}
 
       function localizeTaskTitle(task) {{
@@ -1167,21 +1253,28 @@ def render_arena_html(
       }}
 
       function localizeStepSummary(s) {{
-        const txt = String(s || "");
-        if (currentLang !== "zh") return txt;
-        if (txt.startsWith("Loaded SKILL.md ")) return txt.replace("Loaded SKILL.md ", "已挂载 SKILL.md ");
-        if (txt === "Analyzed task invariants & SKILL.md guardrails") return "分析任务不变量与 SKILL.md 约束护栏";
-        if (txt === "Scanned prompt without specialized skill checklist") return "在无专项技能清单下扫描任务提示词";
-        if (txt === "Inspected source files & ran exploratory command") return "检查源码文件并运行探索命令";
-        if (txt === "Wrote partial implementation attempt") return "编写局部修复补丁尝试";
-        if (txt === "Retried after test failure without root-cause fix") return "单测失败后重试但未定位根因";
-        if (txt === "Deterministic Grader -> PASS") return "确定性判分器 -> 通过";
-        if (txt === "Deterministic Grader -> FAIL") return "确定性判分器 -> 失败";
+        const raw = String(s || "");
+        if (currentLang !== "zh") return raw;
+        let prefix = "";
+        let txt = raw;
+        if (txt.startsWith("[SIMULATED] ")) {{
+          prefix = "[SIMULATED / 模拟数据] ";
+          txt = txt.slice("[SIMULATED] ".length);
+        }}
+        if (txt.startsWith("Loaded synthetic profile ")) return prefix + txt.replace("Loaded synthetic profile ", "已加载合成配置 ");
+        if (txt.startsWith("Loaded SKILL.md ")) return prefix + txt.replace("Loaded SKILL.md ", "已挂载 SKILL.md ");
+        if (txt === "Analyzed task invariants & SKILL.md guardrails") return prefix + "分析任务不变量与 SKILL.md 约束护栏";
+        if (txt === "Scanned prompt without specialized skill checklist") return prefix + "在无专项技能清单下扫描任务提示词";
+        if (txt === "Inspected source files & ran exploratory command") return prefix + "检查源码文件并运行探索命令";
+        if (txt === "Wrote partial implementation attempt") return prefix + "编写局部修复补丁尝试";
+        if (txt === "Retried after test failure without root-cause fix") return prefix + "单测失败后重试但未定位根因";
+        if (txt === "Deterministic Grader -> PASS") return prefix + "确定性判分器 -> 通过";
+        if (txt === "Deterministic Grader -> FAIL") return prefix + "确定性判分器 -> 失败";
         const mRead = txt.match(/^Read workspace & inspected (\\d+) files$/);
-        if (mRead) return "读取沙盒工作区并检查 " + mRead[1] + " 个文件";
+        if (mRead) return prefix + "读取沙盒工作区并检查 " + mRead[1] + " 个文件";
         const mPatch = txt.match(/^Applied targeted patch \\((\\d+) file\\)$/);
-        if (mPatch) return "应用精准修复补丁（" + mPatch[1] + " 个文件）";
-        return txt;
+        if (mPatch) return prefix + "应用精准修复补丁（" + mPatch[1] + " 个文件）";
+        return prefix + txt;
       }}
 
       function localizeStepDetail(d) {{
@@ -1241,6 +1334,11 @@ def render_arena_html(
 
       function renderScoreboardAndMatrix() {{
         const t = I18N[currentLang];
+        const simBannerEl = document.getElementById("sim-banner");
+        if (simBannerEl) {{
+          simBannerEl.hidden = !report.is_simulated;
+          simBannerEl.textContent = t.simBanner;
+        }}
         const expTitle = localizeExpTitle(report.title || "SkillArena Benchmark Report");
         document.title = t.docTitlePrefix + expTitle;
         document.getElementById("brand-sub").textContent = t.brandSub;
@@ -1263,13 +1361,17 @@ def render_arena_html(
             ? ("对照组 " + fmtPct(cPass1) + " 对比 实验组 " + fmtPct(tPass1))
             : ("Control " + fmtPct(cPass1) + " vs Treatment " + fmtPct(tPass1));
 
+        const cMetered = controlMeta.is_metered !== false;
+        const tMetered = treatMeta.is_metered !== false;
         document.getElementById("kpi2-lbl").textContent = t.kpi2Lbl;
+        document.getElementById("kpi2-val").textContent = fmtCostCell(treatMeta.cost_per_success_usd, tMetered);
         document.getElementById("kpi2-foot").textContent =
           currentLang === "zh"
-            ? ("对照组摊销：" + fmtUsd(controlMeta.cost_per_success_usd) + "（含失败重试损耗）")
-            : ("Control amortized: " + fmtUsd(controlMeta.cost_per_success_usd) + " (failed retries included)");
+            ? ("对照组摊销：" + fmtCostCell(controlMeta.cost_per_success_usd, cMetered) + "（含失败重试损耗）")
+            : ("Control amortized: " + fmtCostCell(controlMeta.cost_per_success_usd, cMetered) + " (failed retries included)");
 
         document.getElementById("kpi3-lbl").textContent = t.kpi3Lbl;
+        document.getElementById("kpi3-val").textContent = fmtOvhCell(treatMeta.context_overhead_delta_tokens, tMetered, true);
         document.getElementById("kpi3-foot").textContent = t.kpi3Foot;
         document.getElementById("kpi4-lbl").textContent = t.kpi4Lbl;
         document.getElementById("kpi4-foot").textContent = t.kpi4Foot;
@@ -1277,8 +1379,8 @@ def render_arena_html(
         document.getElementById("sb-heading").textContent = t.sbHeading;
         document.getElementById("sb-note").textContent =
           currentLang === "zh"
-            ? ("Bradley-Terry Elo 与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
-            : ("Bradley-Terry Elo & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
+            ? ("成对胜率换算的 Elo（双组）与 Pass^" + kReps + "（单任务需连续 " + kReps + "/" + kReps + " 次全绿通过）")
+            : ("Win-Rate Derived Elo (2-arm) & Pass^" + kReps + " (" + kReps + "/" + kReps + " consecutive clean passes per task)");
 
         document.getElementById("th-arm").textContent = t.thArm;
         document.getElementById("th-skill").textContent = t.thSkill;
@@ -1293,15 +1395,14 @@ def render_arena_html(
 
         document.getElementById("lb-tbody").innerHTML = leaderboard.map((row) => {{
           const isTreat = row.role === "treatment";
+          const rowMetered = row.is_metered !== false;
           const badgeCls = isTreat ? "arm-pill-treatment" : "arm-pill-control";
           const roleTxt = isTreat ? t.roleTreatment : t.roleControl;
           const skillsTxt = (row.skills_mounted && row.skills_mounted.length)
             ? row.skills_mounted.join(", ")
             : t.noneStripped;
-          const ovh = Number(row.context_overhead_delta_tokens || 0);
-          const ovhTxt = ovh > 0
-            ? ("+" + ovh.toLocaleString("en-US") + " tok")
-            : (ovh < 0 ? (ovh.toLocaleString("en-US") + " tok") : t.zeroBaseline);
+          const cpsTxt = fmtCostCell(row.cost_per_success_usd, rowMetered);
+          const ovhTxt = fmtOvhCell(row.context_overhead_delta_tokens, rowMetered, false);
           const eloVal = Number(row.elo_rating || 1500);
           const intPct = Number(row.anti_cheat_integrity_rate ?? 1.0);
           const intCls = intPct >= 0.999 ? "status-ok" : "status-fail";
@@ -1318,7 +1419,7 @@ def render_arena_html(
               "<td class='mono strong'>" + eloVal + "</td>" +
               "<td class='mono strong'>" + fmtPct(row.pass_at_1) + "</td>" +
               "<td class='mono'>" + fmtPct(row.pass_hat_k) + "</td>" +
-              "<td class='mono'>" + fmtUsd(row.cost_per_success_usd) + "</td>" +
+              "<td class='mono'>" + esc(cpsTxt) + "</td>" +
               "<td class='mono'>" + esc(ovhTxt) + "</td>" +
               "<td class='mono'>" + (Number(row.median_latency_ms || 0) / 1000).toFixed(2) + "s</td>" +
               "<td class='mono " + intCls + "'>" + fmtPct(intPct) + "</td>" +
@@ -1373,6 +1474,12 @@ def render_arena_html(
 
           const cCls = (cP === cTot && cTot > 0) ? "verdict-pass" : (cP > 0 ? "verdict-flaky" : "verdict-fail");
           const tCls = (tP === tTot && tTot > 0) ? "verdict-pass" : (tP > 0 ? "verdict-flaky" : "verdict-fail");
+          const cCostStr = (cArm.is_metered !== false && cArm.mean_cost_usd !== null && cArm.mean_cost_usd !== undefined)
+            ? ("$" + Number(cArm.mean_cost_usd).toFixed(4))
+            : t.unmetered;
+          const tCostStr = (tArm.is_metered !== false && tArm.mean_cost_usd !== null && tArm.mean_cost_usd !== undefined)
+            ? ("$" + Number(tArm.mean_cost_usd).toFixed(4))
+            : t.unmetered;
           let deltaBadge = "<span class='delta-tag delta-tie'>" + esc(t.parity) + "</span>";
           if (deltaVal > 0) {{
             deltaBadge = "<span class='delta-tag delta-win'>+" + deltaVal + "/" + tTot + " " + esc(t.gainWord) + "</span>";
@@ -1387,8 +1494,8 @@ def render_arena_html(
                 "<div class='task-title-text'>" + esc(localizeTaskTitle(item)) + "</div>" +
                 "<div class='task-cat-text'>" + esc(t.suiteDomain + localizeCat(item.category)) + "</div>" +
               "</td>" +
-              "<td class='mono'><span class='verdict-pill " + cCls + "'>" + cP + "/" + cTot + " " + esc(t.passWord) + "</span> · $" + Number(cArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
-              "<td class='mono'><span class='verdict-pill " + tCls + "'>" + tP + "/" + tTot + " " + esc(t.passWord) + "</span> · $" + Number(tArm.mean_cost_usd || 0).toFixed(4) + "</td>" +
+              "<td class='mono'><span class='verdict-pill " + cCls + "'>" + cP + "/" + cTot + " " + esc(t.passWord) + "</span> · " + esc(cCostStr) + "</td>" +
+              "<td class='mono'><span class='verdict-pill " + tCls + "'>" + tP + "/" + tTot + " " + esc(t.passWord) + "</span> · " + esc(tCostStr) + "</td>" +
               "<td class='mono'>" + deltaBadge + "</td>" +
               "<td><button type='button' class='inspect-btn' data-replay-index='" + idx + "'>" + esc(t.inspectBtn) + "</button></td>" +
             "</tr>"
@@ -1429,6 +1536,13 @@ def render_arena_html(
         const pillCls = trial.passed ? "verdict-pass" : "verdict-fail";
         const pillTxt = trial.passed ? t.passExit0 : t.failBadge;
         const bannerCls = isTreatment ? "track-banner is-treatment" : "track-banner";
+        const uMetered = usage.is_metered !== false && usage.total_cost_usd !== null && usage.total_cost_usd !== undefined;
+        const turn1Meta = (uMetered && usage.first_turn_prompt_tokens !== null && usage.first_turn_prompt_tokens !== undefined)
+          ? (usage.first_turn_prompt_tokens + " tok")
+          : t.unmetered;
+        const totalCostMeta = uMetered
+          ? ("$" + Number(usage.total_cost_usd).toFixed(4))
+          : t.unmetered;
 
         const stepCards = steps.map((s, idx) => {{
           const hi = (idx + 1) === activeStep ? "step-card is-highlighted" : "step-card";
@@ -1470,9 +1584,8 @@ def render_arena_html(
               '<div>' +
                 '<div class="arm-name">' + esc(localizeArmLabel(armMeta.label)) + '</div>' +
                 '<div class="arm-meta mono">' +
-                  esc(t.turn1Lbl) + (usage.first_turn_prompt_tokens || 0) + ' tok · ' +
-                  esc(t.totalLbl) + Number(usage.total_cost_usd || 0).toFixed(4) + ' · ' +
-                  esc(t.latLbl) + ((usage.total_latency_ms || 0) / 1000).toFixed(2) + 's' +
+                  esc(t.turn1Lbl + turn1Meta + " · " + t.totalCostLbl + totalCostMeta + " · " + t.latLbl) +
+                  ((usage.total_latency_ms || 0) / 1000).toFixed(2) + "s" +
                 '</div>' +
               '</div>' +
               '<span class="verdict-pill mono ' + pillCls + '">' + esc(pillTxt) + '</span>' +

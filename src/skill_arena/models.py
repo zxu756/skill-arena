@@ -57,12 +57,13 @@ class ContenderConfig:
     contender_id: str
     label: str
     role: str = "control"  # control | treatment
-    cli: str = "claude"  # claude | codex | opencode | vibe | agy | mock
-    model: str = "claude-sonnet-4-5"
+    cli: str = "claude"  # claude | codex | opencode | vibe | agy | simulate
+    model: str = "synthetic-sim-model"
     skill_paths: list[str] = field(default_factory=list)
     agents_md_snippet: str | None = None
     strip_default_skills: bool = True
     extra_args: list[str] = field(default_factory=list)
+    allow_unisolated_host_home: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,11 +75,12 @@ class ContenderConfig:
             label=str(payload["label"]),
             role=str(payload.get("role", "control")),
             cli=str(payload.get("cli", "claude")),
-            model=str(payload.get("model", "claude-sonnet-4-5")),
+            model=str(payload.get("model", "synthetic-sim-model")),
             skill_paths=list(payload.get("skill_paths", [])),
             agents_md_snippet=payload.get("agents_md_snippet"),
             strip_default_skills=bool(payload.get("strip_default_skills", True)),
             extra_args=list(payload.get("extra_args", [])),
+            allow_unisolated_host_home=bool(payload.get("allow_unisolated_host_home", False)),
         )
 
 
@@ -121,30 +123,62 @@ class TokenUsageLedger:
     """Wire-tap proxy token, latency, and USD cost ledger for one trial."""
 
     turns: int = 0
-    first_turn_prompt_tokens: int = 0
-    total_prompt_tokens: int = 0
-    cached_prompt_tokens: int = 0
-    completion_tokens: int = 0
+    first_turn_prompt_tokens: int | None = None
+    total_prompt_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     ttft_ms: int = 0
     total_latency_ms: int = 0
-    total_cost_usd: float = 0.0
+    total_cost_usd: float | None = None
     injected_skill_tokens_est: int = 0
+    is_metered: bool = False
+    usage_status: str = "unmetered"
+    is_simulated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> TokenUsageLedger:
+        if "is_metered" in payload:
+            metered = bool(payload["is_metered"])
+        else:
+            metered = payload.get("total_prompt_tokens") is not None and int(payload.get("turns", 0)) > 0
+        is_sim = bool(payload.get("is_simulated", False))
+        default_status = "simulated" if is_sim else ("metered" if metered else "unmetered")
         return cls(
             turns=int(payload.get("turns", 0)),
-            first_turn_prompt_tokens=int(payload.get("first_turn_prompt_tokens", 0)),
-            total_prompt_tokens=int(payload.get("total_prompt_tokens", 0)),
-            cached_prompt_tokens=int(payload.get("cached_prompt_tokens", 0)),
-            completion_tokens=int(payload.get("completion_tokens", 0)),
+            first_turn_prompt_tokens=(
+                int(payload["first_turn_prompt_tokens"])
+                if metered and payload.get("first_turn_prompt_tokens") is not None
+                else None
+            ),
+            total_prompt_tokens=(
+                int(payload["total_prompt_tokens"])
+                if metered and payload.get("total_prompt_tokens") is not None
+                else None
+            ),
+            cached_prompt_tokens=(
+                int(payload["cached_prompt_tokens"])
+                if metered and payload.get("cached_prompt_tokens") is not None
+                else None
+            ),
+            completion_tokens=(
+                int(payload["completion_tokens"])
+                if metered and payload.get("completion_tokens") is not None
+                else None
+            ),
             ttft_ms=int(payload.get("ttft_ms", 0)),
             total_latency_ms=int(payload.get("total_latency_ms", 0)),
-            total_cost_usd=float(payload.get("total_cost_usd", 0.0)),
+            total_cost_usd=(
+                float(payload["total_cost_usd"])
+                if metered and payload.get("total_cost_usd") is not None
+                else None
+            ),
             injected_skill_tokens_est=int(payload.get("injected_skill_tokens_est", 0)),
+            is_metered=metered,
+            usage_status=str(payload.get("usage_status", default_status)),
+            is_simulated=is_sim,
         )
 
 
@@ -205,6 +239,7 @@ class TrialResult:
     git_diff: str
     started_at: str
     finished_at: str
+    is_simulated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -225,6 +260,7 @@ class TrialResult:
             "git_diff": self.git_diff,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "is_simulated": self.is_simulated,
         }
 
 
@@ -244,13 +280,16 @@ class LeaderboardSummary:
     pass_at_1: float
     pass_hat_k: float
     k_reps: int
-    total_spend_usd: float
+    total_spend_usd: float | None
     cost_per_success_usd: float | None
-    mean_first_turn_tokens: int
-    context_overhead_delta_tokens: int
+    mean_first_turn_tokens: int | None
+    context_overhead_delta_tokens: int | None
     median_latency_ms: int
     anti_cheat_integrity_rate: float
     elo_rating: int = 1500
+    is_metered: bool = False
+    usage_status: str = "unmetered"
+    is_simulated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

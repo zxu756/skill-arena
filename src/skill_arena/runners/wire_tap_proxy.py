@@ -25,6 +25,8 @@ MODEL_PRICING_PER_M: dict[str, tuple[float, float, float]] = {
     "mistral-medium-3": (0.40, 0.10, 2.00),
 }
 
+_USAGE_TOKEN_KEYS = ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens")
+
 
 def compute_turn_cost_usd(
     model: str,
@@ -56,39 +58,69 @@ class WireTapTurnRecord:
     turn_index: int
     endpoint: str
     model: str
-    prompt_tokens: int
-    cached_tokens: int
-    completion_tokens: int
+    prompt_tokens: int | None
+    cached_tokens: int | None
+    completion_tokens: int | None
     ttft_ms: int
     latency_ms: int
-    cost_usd: float
+    cost_usd: float | None
+    has_usage: bool = True
 
 
-def _extract_usage_from_json(payload: dict[str, Any], default_model: str) -> tuple[str, int, int, int]:
-    model = str(payload.get("model") or default_model)
-    usage = payload.get("usage") or {}
+def _extract_usage_from_json_detailed(
+    payload: dict[str, Any],
+    default_model: str,
+) -> tuple[str, int | None, int | None, int | None, bool]:
+    if not isinstance(payload, dict):
+        return default_model, None, None, None, False
+    resp_obj = payload.get("response") if isinstance(payload.get("response"), dict) else None
+    model = str(payload.get("model") or (resp_obj.get("model") if resp_obj else None) or default_model)
+    usage = payload.get("usage")
+    if not isinstance(usage, dict) and resp_obj is not None:
+        usage = resp_obj.get("usage")
+    if not isinstance(usage, dict) or not any(k in usage for k in _USAGE_TOKEN_KEYS):
+        return model, None, None, None, False
+
     # Anthropic format: input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens
     if "input_tokens" in usage or "output_tokens" in usage:
+        # Distinguish Anthropic vs OpenAI Responses (Responses has input_tokens_details)
+        if "input_tokens_details" in usage and "cache_read_input_tokens" not in usage:
+            total_in = int(usage.get("input_tokens", 0))
+            details = usage.get("input_tokens_details") or {}
+            cached = int(details.get("cached_tokens", 0)) if isinstance(details, dict) else 0
+            out_tok = int(usage.get("output_tokens", 0))
+            return model, total_in, cached, out_tok, True
         uncached = int(usage.get("input_tokens", 0))
         cache_read = int(usage.get("cache_read_input_tokens", 0))
         cache_create = int(usage.get("cache_creation_input_tokens", 0))
         total_in = uncached + cache_read + cache_create
         out_tok = int(usage.get("output_tokens", 0))
-        return model, total_in, cache_read, out_tok
+        return model, total_in, cache_read, out_tok, True
 
-    # OpenAI / Responses format: prompt_tokens, prompt_tokens_details.cached_tokens, completion_tokens
+    # OpenAI chat/completions format: prompt_tokens, prompt_tokens_details.cached_tokens, completion_tokens
     total_in = int(usage.get("prompt_tokens", 0))
     details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-    cached = int(details.get("cached_tokens", 0))
+    cached = int(details.get("cached_tokens", 0)) if isinstance(details, dict) else 0
     out_tok = int(usage.get("completion_tokens", 0))
-    return model, total_in, cached, out_tok
+    return model, total_in, cached, out_tok, True
 
 
-def _extract_usage_from_sse(raw_body: bytes, default_model: str) -> tuple[str, int, int, int]:
+def _extract_usage_from_json(payload: dict[str, Any], default_model: str) -> tuple[str, int, int, int]:
+    model, p_in, p_cache, p_out, ok = _extract_usage_from_json_detailed(payload, default_model)
+    if not ok:
+        return model, 0, 0, 0
+    return model, int(p_in or 0), int(p_cache or 0), int(p_out or 0)
+
+
+def _extract_usage_from_sse_detailed(
+    raw_body: bytes,
+    default_model: str,
+) -> tuple[str, int | None, int | None, int | None, bool]:
     model = default_model
     total_in = 0
     cached = 0
     out_tok = 0
+    saw_usage = False
     text = raw_body.decode("utf-8", errors="replace")
     for line in text.splitlines():
         if not line.startswith("data:"):
@@ -104,17 +136,34 @@ def _extract_usage_from_sse(raw_body: bytes, default_model: str) -> tuple[str, i
             msg = event.get("message") if isinstance(event.get("message"), dict) else event
             if msg.get("model"):
                 model = str(msg["model"])
-            if "usage" in event or "usage" in msg:
-                target = event if "usage" in event else msg
-                m, p_in, p_cache, p_out = _extract_usage_from_json(target, model)
+            target: dict[str, Any] | None = None
+            if isinstance(event.get("usage"), dict):
+                target = event
+            elif isinstance(msg.get("usage"), dict):
+                target = msg
+            elif isinstance(event.get("response"), dict) and isinstance(event["response"].get("usage"), dict):
+                target = event
+            if target is not None:
+                m, p_in, p_cache, p_out, ok = _extract_usage_from_json_detailed(target, model)
                 model = m
-                if p_in > 0:
-                    total_in = p_in
-                if p_cache > 0:
-                    cached = p_cache
-                if p_out > 0:
-                    out_tok = p_out
-    return model, total_in, cached, out_tok
+                if ok:
+                    saw_usage = True
+                    if (p_in or 0) > 0:
+                        total_in = int(p_in or 0)
+                    if (p_cache or 0) > 0:
+                        cached = int(p_cache or 0)
+                    if (p_out or 0) > 0:
+                        out_tok = int(p_out or 0)
+    if not saw_usage:
+        return model, None, None, None, False
+    return model, total_in, cached, out_tok, True
+
+
+def _extract_usage_from_sse(raw_body: bytes, default_model: str) -> tuple[str, int, int, int]:
+    model, p_in, p_cache, p_out, ok = _extract_usage_from_sse_detailed(raw_body, default_model)
+    if not ok:
+        return model, 0, 0, 0
+    return model, int(p_in or 0), int(p_cache or 0), int(p_out or 0)
 
 
 class LoopbackWireTapProxy:
@@ -123,7 +172,7 @@ class LoopbackWireTapProxy:
     def __init__(
         self,
         upstream_base_url: str | None = None,
-        default_model: str = "claude-sonnet-4-5",
+        default_model: str = "synthetic-sim-model",
         synthetic_responder: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]] | None = None,
     ) -> None:
         self.upstream_base_url = upstream_base_url.rstrip("/") if upstream_base_url else None
@@ -166,8 +215,8 @@ class LoopbackWireTapProxy:
                     ttft_ms = max(1, int((time.perf_counter() - t0) * 1000))
                     resp_bytes = json.dumps(resp_dict).encode("utf-8")
                     latency_ms = max(ttft_ms, int((time.perf_counter() - t0) * 1000))
-                    model, p_tok, c_tok, o_tok = _extract_usage_from_json(resp_dict, req_model)
-                    proxy._record_turn(self.path, model, p_tok, c_tok, o_tok, ttft_ms, latency_ms)
+                    model, p_tok, c_tok, o_tok, has_usage = _extract_usage_from_json_detailed(resp_dict, req_model)
+                    proxy._record_turn(self.path, model, p_tok, c_tok, o_tok, ttft_ms, latency_ms, has_usage=has_usage)
                     self.send_response(status)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(resp_bytes)))
@@ -230,14 +279,14 @@ class LoopbackWireTapProxy:
                 latency_ms = max(ttft_ms, int((time.perf_counter() - t0) * 1000))
                 full_body = b"".join(chunks)
                 if "text/event-stream" in resp_content_type:
-                    model, p_tok, c_tok, o_tok = _extract_usage_from_sse(full_body, req_model)
+                    model, p_tok, c_tok, o_tok, has_usage = _extract_usage_from_sse_detailed(full_body, req_model)
                 else:
                     try:
                         parsed = json.loads(full_body.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
                         parsed = {}
-                    model, p_tok, c_tok, o_tok = _extract_usage_from_json(parsed, req_model)
-                proxy._record_turn(self.path, model, p_tok, c_tok, o_tok, ttft_ms, latency_ms)
+                    model, p_tok, c_tok, o_tok, has_usage = _extract_usage_from_json_detailed(parsed, req_model)
+                proxy._record_turn(self.path, model, p_tok, c_tok, o_tok, ttft_ms, latency_ms, has_usage=has_usage)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -257,45 +306,74 @@ class LoopbackWireTapProxy:
         self,
         endpoint: str,
         model: str,
-        prompt_tokens: int,
-        cached_tokens: int,
-        completion_tokens: int,
+        prompt_tokens: int | None,
+        cached_tokens: int | None,
+        completion_tokens: int | None,
         ttft_ms: int,
         latency_ms: int,
+        *,
+        has_usage: bool = True,
     ) -> None:
         with self._lock:
             idx = len(self._turns) + 1
-            cost = compute_turn_cost_usd(model, prompt_tokens, cached_tokens, completion_tokens)
+            cost = (
+                compute_turn_cost_usd(
+                    model,
+                    int(prompt_tokens or 0),
+                    int(cached_tokens or 0),
+                    int(completion_tokens or 0),
+                )
+                if has_usage and prompt_tokens is not None
+                else None
+            )
             self._turns.append(
                 WireTapTurnRecord(
                     turn_index=idx,
                     endpoint=endpoint,
                     model=model,
-                    prompt_tokens=prompt_tokens,
-                    cached_tokens=cached_tokens,
-                    completion_tokens=completion_tokens,
+                    prompt_tokens=prompt_tokens if has_usage else None,
+                    cached_tokens=cached_tokens if has_usage else None,
+                    completion_tokens=completion_tokens if has_usage else None,
                     ttft_ms=ttft_ms,
                     latency_ms=latency_ms,
                     cost_usd=cost,
+                    has_usage=has_usage,
                 )
             )
 
     def summarize(self, injected_skill_tokens_est: int = 0) -> tuple[TokenUsageLedger, list[WireTapTurnRecord]]:
         with self._lock:
             records = list(self._turns)
-        if not records:
-            return TokenUsageLedger(injected_skill_tokens_est=injected_skill_tokens_est), []
+        if not records or not all(r.has_usage for r in records):
+            return (
+                TokenUsageLedger(
+                    turns=len(records),
+                    first_turn_prompt_tokens=None,
+                    total_prompt_tokens=None,
+                    cached_prompt_tokens=None,
+                    completion_tokens=None,
+                    ttft_ms=records[0].ttft_ms if records else 0,
+                    total_latency_ms=sum(r.latency_ms for r in records),
+                    total_cost_usd=None,
+                    injected_skill_tokens_est=injected_skill_tokens_est,
+                    is_metered=False,
+                    usage_status="unmetered",
+                ),
+                records,
+            )
         return (
             TokenUsageLedger(
                 turns=len(records),
-                first_turn_prompt_tokens=records[0].prompt_tokens,
-                total_prompt_tokens=sum(r.prompt_tokens for r in records),
-                cached_prompt_tokens=sum(r.cached_tokens for r in records),
-                completion_tokens=sum(r.completion_tokens for r in records),
+                first_turn_prompt_tokens=int(records[0].prompt_tokens or 0),
+                total_prompt_tokens=sum(int(r.prompt_tokens or 0) for r in records),
+                cached_prompt_tokens=sum(int(r.cached_tokens or 0) for r in records),
+                completion_tokens=sum(int(r.completion_tokens or 0) for r in records),
                 ttft_ms=records[0].ttft_ms,
                 total_latency_ms=sum(r.latency_ms for r in records),
-                total_cost_usd=round(sum(r.cost_usd for r in records), 6),
+                total_cost_usd=round(sum(float(r.cost_usd or 0.0) for r in records), 6),
                 injected_skill_tokens_est=injected_skill_tokens_est,
+                is_metered=True,
+                usage_status="metered",
             ),
             records,
         )
