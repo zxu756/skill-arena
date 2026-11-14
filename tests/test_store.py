@@ -226,3 +226,72 @@ def test_metered_tokens_with_unknown_model_price_keeps_cost_none(tmp_path: Path)
     assert row["mean_first_turn_tokens"] == 1400
     assert row["total_spend_usd"] is None
     assert row["cost_per_success_usd"] is None
+
+
+def test_kr3_parse_relay_log_md_sums_step_costs_and_surfaces_alongside_xray_cost(
+    tmp_path: Path,
+) -> None:
+    import pytest
+    from skill_arena.runners.harness_driver import parse_relay_artifacts
+
+    workdir = tmp_path / "work"
+    relay_dir = workdir / ".relay"
+    relay_dir.mkdir(parents=True)
+    (relay_dir / "LOG.md").write_text(
+        "# Relay Log\n\n"
+        "## 01-claude: ok, 3s, 2026-11-15 10:00\n"
+        "- claude: model claude-sonnet-4-5, cost $0.0125, tokens 450, session s1\n"
+        "- files changed:\n"
+        "  - a.py\n\n"
+        "## 02-claude: ok, 2s, 2026-11-15 10:01\n"
+        "- claude: model claude-sonnet-4-5, cost $0.0075, tokens 350, session s2\n"
+        "- files changed:\n"
+        "  - b.py\n",
+        encoding="utf-8",
+    )
+    # Even if step 02 raw .log only has step 02's $0.0075, LOG.md step sum ($0.0200) must win!
+    (relay_dir / "02-claude.log").write_text(
+        '{"result":"done","total_cost_usd":0.0075,"usage":{"total_tokens":350}}\n',
+        encoding="utf-8",
+    )
+
+    rec = parse_relay_artifacts(workdir)
+    assert rec.status == "ok"
+    assert rec.cost_usd == pytest.approx(0.0200)
+    assert rec.tokens == 800
+    assert rec.changed_files == ["a.py", "b.py"]
+
+    db = ArenaDatabase(tmp_path / "kr3.sqlite")
+    ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="claude-sonnet-4-5")
+    treat = ContenderConfig(contender_id="treat", label="Treatment", role="treatment", cli="claude", model="claude-sonnet-4-5")
+    db.create_experiment("exp_kr3", title="KR3 Dual Cost", suite_name="s", k_reps=2, contenders=[ctrl, treat])
+
+    t_c1 = _make_trial("exp_kr3", "task1", ctrl, 1, True, metered=True, turn1_tokens=500, cost_usd=0.0021)
+    t_c1.usage.relay_cost_usd = 0.0150
+    t_c2 = _make_trial("exp_kr3", "task1", ctrl, 2, True, metered=True, turn1_tokens=500, cost_usd=0.0023)
+    t_c2.usage.relay_cost_usd = 0.0160
+
+    t_t1 = _make_trial("exp_kr3", "task1", treat, 1, True, metered=True, turn1_tokens=620, cost_usd=0.0031)
+    t_t1.usage.relay_cost_usd = 0.0210
+    t_t2 = _make_trial("exp_kr3", "task1", treat, 2, True, metered=True, turn1_tokens=620, cost_usd=0.0033)
+    t_t2.usage.relay_cost_usd = 0.0220
+
+    for tr in (t_c1, t_c2, t_t1, t_t2):
+        db.record_trial(tr)
+
+    rep = db.build_comparison_report("exp_kr3")
+    by_id = {r["contender_id"]: r for r in rep["leaderboard"]}
+    assert by_id["ctrl"]["total_spend_usd"] == pytest.approx(0.0044)
+    assert by_id["ctrl"]["metered_cost_usd"] == pytest.approx(0.0044)
+    assert by_id["ctrl"]["total_relay_cost_usd"] == pytest.approx(0.0310)
+    assert by_id["ctrl"]["relay_cost_usd"] == pytest.approx(0.0310)
+
+    assert by_id["treat"]["total_spend_usd"] == pytest.approx(0.0064)
+    assert by_id["treat"]["metered_cost_usd"] == pytest.approx(0.0064)
+    assert by_id["treat"]["total_relay_cost_usd"] == pytest.approx(0.0430)
+    assert by_id["treat"]["relay_cost_usd"] == pytest.approx(0.0430)
+
+    assert "arms" in rep and len(rep["arms"]) == 2
+    assert "trials" in rep and len(rep["trials"]) == 4
+    assert [tr["relay_cost_usd"] for tr in rep["trials"]] == [0.015, 0.016, 0.021, 0.022]
+

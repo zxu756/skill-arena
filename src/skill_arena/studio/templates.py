@@ -117,6 +117,7 @@ def render_arena_html(
     stat_verdict = str(stat_comp.get("verdict", "inconclusive"))
     ci_low_pp = float(stat_comp.get("ci_low", 0.0)) * 100.0
     ci_high_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
+    is_simulated_exp = bool(report.get("is_simulated"))
     if stat_verdict == "treatment_better":
         kpi1_tone_cls = "tone-win"
         kpi1_val_str = lift_str
@@ -129,8 +130,8 @@ def render_arena_html(
         kpi1_tone_cls = ""
         kpi1_val_str = "看不出差别" if is_zh else "Inconclusive"
         verdict_short = "看不出差别（不排定名次）" if is_zh else "Inconclusive (no rank)"
-
-    is_simulated_exp = bool(report.get("is_simulated"))
+    if is_simulated_exp:
+        verdict_short = f"[SIMULATED | 模拟] {verdict_short}" if is_zh else f"[SIMULATED] {verdict_short}"
     c_metered = bool(control.get("is_metered", True))
     t_metered = bool(treatment.get("is_metered", True))
     c_cps = control.get("cost_per_success_usd")
@@ -160,6 +161,8 @@ def render_arena_html(
                 else "None in workspace (host HOME opted-in)"
             )
         skills_txt = ", ".join(row.get("skills_mounted") or []) or none_txt
+        xray_spend_txt = _fmt_cost_cell(row.get("total_spend_usd"), row_metered, is_zh)
+        relay_spend_txt = _fmt_usd(row.get("total_relay_cost_usd"))
         cps_txt = _fmt_cost_cell(row.get("cost_per_success_usd"), row_metered, is_zh)
         ovh_txt = _fmt_ovh_cell(row.get("context_overhead_delta_tokens"), row_metered, is_zh)
         elo_val = int(row.get("elo_rating", 1500))
@@ -185,6 +188,8 @@ def render_arena_html(
               <td class="mono strong">{elo_val}</td>
               <td class="mono strong">{_fmt_pct(float(row.get("pass_at_1", 0.0)))}</td>
               <td class="mono">{_fmt_pct(float(row.get("pass_hat_k", 0.0)))}</td>
+              <td class="mono">{html.escape(xray_spend_txt)}</td>
+              <td class="mono">{html.escape(relay_spend_txt)}</td>
               <td class="mono">{html.escape(cps_txt)}</td>
               <td class="mono">{html.escape(ovh_txt)}</td>
               <td class="mono">{float(row.get("median_latency_ms", 0)) / 1000.0:.2f}s</td>
@@ -218,7 +223,11 @@ def render_arena_html(
         c_arm_metered = bool(c_arm.get("is_metered", True)) and c_arm.get("mean_cost_usd") is not None
         t_arm_metered = bool(t_arm.get("is_metered", True)) and t_arm.get("mean_cost_usd") is not None
         c_cost_str = f"${float(c_arm['mean_cost_usd']):.4f}" if c_arm_metered else ("未计量" if is_zh else "Unmetered")
+        if c_arm.get("mean_relay_cost_usd") is not None:
+            c_cost_str = f"{c_cost_str} · relay ${float(c_arm['mean_relay_cost_usd']):.4f}"
         t_cost_str = f"${float(t_arm['mean_cost_usd']):.4f}" if t_arm_metered else ("未计量" if is_zh else "Unmetered")
+        if t_arm.get("mean_relay_cost_usd") is not None:
+            t_cost_str = f"{t_cost_str} · relay ${float(t_arm['mean_relay_cost_usd']):.4f}"
         delta_val = t_p - c_p
         if delta_val > 0:
             gain_txt = f"+{delta_val}/{t_tot} 净提升" if is_zh else f"+{delta_val}/{t_tot} gain"
@@ -251,6 +260,42 @@ def render_arena_html(
             """
         )
 
+    trial_ledger_rows_html: list[str] = []
+    for tr in list(report.get("trials") or []):
+        tr_u = dict(tr.get("usage") or {})
+        tr_metered = bool(tr_u.get("is_metered", False))
+        tr_xray = (
+            f"${float(tr_u['total_cost_usd']):.4f}"
+            if (tr_metered and tr_u.get("total_cost_usd") is not None)
+            else ("未计量" if is_zh else "Unmetered")
+        )
+        tr_relay = (
+            f"${float(tr_u['relay_cost_usd']):.4f}"
+            if tr_u.get("relay_cost_usd") is not None
+            else "n/a"
+        )
+        tr_role_raw = str(tr.get("contender_role", ""))
+        tr_role_txt = ("实验组" if tr_role_raw == "treatment" else "对照组") if is_zh else ("Treatment" if tr_role_raw == "treatment" else "Control")
+        tr_ok = bool(tr.get("passed"))
+        tr_cls = "verdict-pass" if tr_ok else "verdict-fail"
+        tr_res_txt = ("通过" if tr_ok else "失败") if is_zh else ("PASS" if tr_ok else "FAIL")
+        trial_ledger_rows_html.append(
+            f"""
+            <tr>
+              <td class="mono">{html.escape(str(tr.get("task_id", "")))}</td>
+              <td class="mono">{html.escape(tr_role_txt)}</td>
+              <td class="mono">{int(tr.get("rep_index", 1))}</td>
+              <td class="mono"><span class="verdict-pill {tr_cls}">{html.escape(tr_res_txt)}</span></td>
+              <td class="mono">{html.escape(tr_xray)}</td>
+              <td class="mono">{html.escape(tr_relay)}</td>
+            </tr>
+            """
+        )
+
+    tl_heading = "逐试次代理与 Relay 费用台账" if is_zh else "Per-trial XRay & Relay cost ledger"
+    tl_rep_hdr = "轮次" if is_zh else "Rep"
+    tl_res_hdr = "结果" if is_zh else "Result"
+
     safe_json = _clean_prose(json.dumps(report, ensure_ascii=True)).replace("</", "<\\/")
     zh_titles_json = _clean_prose(json.dumps(TASK_TITLE_ZH, ensure_ascii=False)).replace("</", "<\\/")
     zh_cats_json = _clean_prose(json.dumps(CATEGORY_ZH, ensure_ascii=False)).replace("</", "<\\/")
@@ -265,6 +310,26 @@ def render_arena_html(
         if is_zh
         else "[SIMULATED] Synthetic calibration data only - no real model or external SKILL.md was executed."
     )
+    budget_val = report.get("budget_usd")
+    cum_cost_val = float(report.get("cumulative_cost_usd") or 0.0)
+    budget_stopped = bool(report.get("budget_stopped"))
+    planned_n = int(report.get("planned_trials") or 0)
+    completed_n = int(report.get("completed_trials") or 0)
+    budget_banner_hidden = "" if (budget_stopped and budget_val is not None) else "hidden"
+    if budget_stopped and budget_val is not None:
+        budget_banner_txt = (
+            (
+                f"[预算上限停止] 实验总预算上限 ${float(budget_val):.4f} · 累计花费 ${cum_cost_val:.4f} · "
+                f"已完成 {completed_n}/{planned_n} 次试验（在超出预算前停止）。"
+            )
+            if is_zh
+            else (
+                f"[BUDGET STOPPED] Budget ceiling ${float(budget_val):.4f} · cumulative spend ${cum_cost_val:.4f} · "
+                f"completed {completed_n}/{planned_n} planned trials (halted before exceeding budget)."
+            )
+        )
+    else:
+        budget_banner_txt = ""
 
     zh_active = "is-active" if is_zh else ""
     en_active = "" if is_zh else "is-active"
@@ -284,10 +349,17 @@ def render_arena_html(
     tab_score_txt = "排行榜与成本效能" if is_zh else "Scoreboard & economics"
     tab_replay_txt = "双轨轨迹与补丁回放" if is_zh else "Dual-track trajectory replay"
     theme_btn_txt = "深色遥测主题" if is_zh else "Switch telemetry theme"
+    budget_meta_suffix = ""
+    if budget_val is not None:
+        budget_meta_suffix = (
+            f" · 总预算上限 ${float(budget_val):.4f}（累计 ${cum_cost_val:.4f}，{completed_n}/{planned_n} 次）"
+            if is_zh
+            else f" · Budget ceiling ${float(budget_val):.4f} (spent ${cum_cost_val:.4f}, {completed_n}/{planned_n} trials)"
+        )
     exp_meta_txt = (
-        f"实验编号 {exp_id} · 评测集：{suite_name}（{len(task_matrix)} 项任务 x {k_reps} 轮独立 Worktree 重复）"
+        f"实验编号 {exp_id} · 评测集：{suite_name}（{len(task_matrix)} 项任务 x {k_reps} 轮独立 Worktree 重复）{budget_meta_suffix}"
         if is_zh
-        else f"Experiment {exp_id} · Suite: {suite_name} ({len(task_matrix)} tasks x {k_reps} isolated worktree reps)"
+        else f"Experiment {exp_id} · Suite: {suite_name} ({len(task_matrix)} tasks x {k_reps} isolated worktree reps){budget_meta_suffix}"
     )
     grader_note_txt = (
         "零大模型裁判 · 确定性单测 + Hallmark 工艺检查 + SHA-256 防篡改校验"
@@ -332,6 +404,8 @@ def render_arena_html(
     th_elo = "胜率换算 Elo" if is_zh else "Win-Rate Elo (2-arm)"
     th_pass1 = "Pass@1"
     th_passk = f"Pass^{k_reps} 稳健率" if is_zh else f"Pass^{k_reps} consistency"
+    th_xray = "代理计量花费" if is_zh else "XRay spend"
+    th_relay = "Relay日志花费" if is_zh else "Relay LOG spend"
     th_cps = "单次成功成本" if is_zh else "Cost / success"
     th_delta = "首轮上下文税" if is_zh else "Turn-1 Context Tax"
     th_lat = "中位耗时" if is_zh else "Median latency"
@@ -922,6 +996,7 @@ def render_arena_html(
 
   <main class="page-shell">
     <section class="sim-banner mono" id="sim-banner" {sim_banner_hidden}>{html.escape(sim_banner_txt)}</section>
+    <section class="sim-banner mono" id="budget-banner" {budget_banner_hidden}>{html.escape(budget_banner_txt)}</section>
 
     <section class="exp-banner">
       <div>
@@ -968,6 +1043,8 @@ def render_arena_html(
               <th id="th-elo">{html.escape(th_elo)}</th>
               <th id="th-pass1">{html.escape(th_pass1)}</th>
               <th id="th-passk">{html.escape(th_passk)}</th>
+              <th id="th-xray">{html.escape(th_xray)}</th>
+              <th id="th-relay">{html.escape(th_relay)}</th>
               <th id="th-cps">{html.escape(th_cps)}</th>
               <th id="th-delta">{html.escape(th_delta)}</th>
               <th id="th-lat">{html.escape(th_lat)}</th>
@@ -1005,6 +1082,27 @@ def render_arena_html(
           </thead>
           <tbody id="matrix-tbody">
             {"".join(matrix_rows_html)}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel" style="margin-top: 20px;">
+        <div class="panel-head">
+          <h2 id="tl-heading">{html.escape(tl_heading)}</h2>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th id="tl-th-task">{html.escape(mth_id)}</th>
+              <th id="tl-th-arm">{html.escape(th_arm)}</th>
+              <th id="tl-th-rep">{html.escape(tl_rep_hdr)}</th>
+              <th id="tl-th-res">{html.escape(tl_res_hdr)}</th>
+              <th id="tl-th-xray">{html.escape(th_xray)}</th>
+              <th id="tl-th-relay">{html.escape(th_relay)}</th>
+            </tr>
+          </thead>
+          <tbody id="trial-ledger-tbody">
+            {"".join(trial_ledger_rows_html)}
           </tbody>
         </table>
       </section>
@@ -1081,10 +1179,16 @@ def render_arena_html(
           thSkill: "Mounted SKILL.md",
           thElo: "Win-Rate Elo (2-arm)",
           thPass1: "Pass@1",
+          thXray: "XRay spend",
+          thRelay: "Relay LOG spend",
           thCps: "Cost / success",
           thDelta: "Turn-1 Context Tax",
           thLat: "Median latency",
           thInt: "Test integrity",
+          tlHeading: "Per-trial XRay & Relay cost ledger",
+          tlRep: "Rep",
+          tlRes: "Result",
+          relayCostLbl: "Relay: ",
           roleControl: "Control",
           roleTreatment: "Treatment",
           noneIsolated: "0 skills (isolated HOME)",
@@ -1155,10 +1259,16 @@ def render_arena_html(
           thSkill: "挂载技能",
           thElo: "胜率换算 Elo",
           thPass1: "Pass@1",
+          thXray: "代理计量花费",
+          thRelay: "Relay日志花费",
           thCps: "单次成功成本",
           thDelta: "首轮上下文税",
           thLat: "中位耗时",
           thInt: "防作弊完整性",
+          tlHeading: "逐试次代理与 Relay 费用台账",
+          tlRep: "轮次",
+          tlRes: "结果",
+          relayCostLbl: "Relay：",
           roleControl: "对照组",
           roleTreatment: "实验组",
           noneIsolated: "0 个技能（独立隔离 HOME）",
@@ -1372,6 +1482,21 @@ def render_arena_html(
           simBannerEl.hidden = !report.is_simulated;
           simBannerEl.textContent = t.simBanner;
         }}
+        const budgetBannerEl = document.getElementById("budget-banner");
+        const hasBudget = report.budget_usd !== null && report.budget_usd !== undefined;
+        const bCeiling = Number(report.budget_usd || 0).toFixed(4);
+        const bCum = Number(report.cumulative_cost_usd || 0).toFixed(4);
+        const bDone = Number(report.completed_trials || 0);
+        const bPlan = Number(report.planned_trials || 0);
+        if (budgetBannerEl) {{
+          const showBudgetBanner = Boolean(report.budget_stopped && hasBudget);
+          budgetBannerEl.hidden = !showBudgetBanner;
+          budgetBannerEl.textContent = showBudgetBanner
+            ? (currentLang === "zh"
+                ? ("[预算上限停止] 实验总预算上限 $" + bCeiling + " · 累计花费 $" + bCum + " · 已完成 " + bDone + "/" + bPlan + " 次试验（在超出预算前停止）。")
+                : ("[BUDGET STOPPED] Budget ceiling $" + bCeiling + " · cumulative spend $" + bCum + " · completed " + bDone + "/" + bPlan + " planned trials (halted before exceeding budget)."))
+            : "";
+        }}
         const expTitle = localizeExpTitle(report.title || "SkillArena Benchmark Report");
         document.title = t.docTitlePrefix + expTitle;
         document.getElementById("brand-sub").textContent = t.brandSub;
@@ -1379,11 +1504,16 @@ def render_arena_html(
         btnReplay.textContent = t.tabReplay;
         syncThemeButtonLabel();
 
+        const bMetaSuffix = hasBudget
+          ? (currentLang === "zh"
+              ? (" · 总预算上限 $" + bCeiling + "（累计 $" + bCum + "，" + bDone + "/" + bPlan + " 次）")
+              : (" · Budget ceiling $" + bCeiling + " (spent $" + bCum + ", " + bDone + "/" + bPlan + " trials)"))
+          : "";
         document.getElementById("exp-title").textContent = expTitle;
         document.getElementById("exp-meta-line").textContent =
           currentLang === "zh"
-            ? ("实验编号 " + report.experiment_id + " · 评测集：" + report.suite_name + "（" + tasks.length + " 项任务 x " + kReps + " 轮独立 Worktree 重复）")
-            : ("Experiment " + report.experiment_id + " · Suite: " + report.suite_name + " (" + tasks.length + " tasks x " + kReps + " isolated worktree reps)");
+            ? ("实验编号 " + report.experiment_id + " · 评测集：" + report.suite_name + "（" + tasks.length + " 项任务 x " + kReps + " 轮独立 Worktree 重复）" + bMetaSuffix)
+            : ("Experiment " + report.experiment_id + " · Suite: " + report.suite_name + " (" + tasks.length + " tasks x " + kReps + " isolated worktree reps)" + bMetaSuffix);
         document.getElementById("grader-note").textContent = t.graderNote;
 
         const cPass1 = Number(controlMeta.pass_at_1 || 0);
@@ -1408,6 +1538,9 @@ def render_arena_html(
           verdictShort = t.ctrlWinsShort;
         }} else {{
           kpi1ValEl.textContent = t.inconclusiveWord;
+        }}
+        if (report.is_simulated) {{
+          verdictShort = (currentLang === "zh" ? "[SIMULATED | 模拟] " : "[SIMULATED] ") + verdictShort;
         }}
         document.getElementById("kpi1-lbl").textContent = t.kpi1Lbl;
         document.getElementById("kpi1-foot").textContent =
@@ -1442,6 +1575,8 @@ def render_arena_html(
         document.getElementById("th-pass1").textContent = t.thPass1;
         document.getElementById("th-passk").textContent =
           currentLang === "zh" ? ("Pass^" + kReps + " 稳健率") : ("Pass^" + kReps + " consistency");
+        document.getElementById("th-xray").textContent = t.thXray;
+        document.getElementById("th-relay").textContent = t.thRelay;
         document.getElementById("th-cps").textContent = t.thCps;
         document.getElementById("th-delta").textContent = t.thDelta;
         document.getElementById("th-lat").textContent = t.thLat;
@@ -1456,6 +1591,8 @@ def render_arena_html(
           const skillsTxt = (row.skills_mounted && row.skills_mounted.length)
             ? row.skills_mounted.join(", ")
             : (rowIso ? t.noneIsolated : t.noneHostOptIn);
+          const xraySpendTxt = fmtCostCell(row.total_spend_usd, rowMetered);
+          const relaySpendTxt = fmtUsd(row.total_relay_cost_usd);
           const cpsTxt = fmtCostCell(row.cost_per_success_usd, rowMetered);
           const ovhTxt = fmtOvhCell(row.context_overhead_delta_tokens, rowMetered, false);
           const eloVal = Number(row.elo_rating || 1500);
@@ -1477,6 +1614,8 @@ def render_arena_html(
               "<td class='mono strong'>" + eloVal + "</td>" +
               "<td class='mono strong'>" + fmtPct(row.pass_at_1) + "</td>" +
               "<td class='mono'>" + fmtPct(row.pass_hat_k) + "</td>" +
+              "<td class='mono'>" + esc(xraySpendTxt) + "</td>" +
+              "<td class='mono'>" + esc(relaySpendTxt) + "</td>" +
               "<td class='mono'>" + esc(cpsTxt) + "</td>" +
               "<td class='mono'>" + esc(ovhTxt) + "</td>" +
               "<td class='mono'>" + (Number(row.median_latency_ms || 0) / 1000).toFixed(2) + "s</td>" +
@@ -1532,12 +1671,18 @@ def render_arena_html(
 
           const cCls = (cP === cTot && cTot > 0) ? "verdict-pass" : (cP > 0 ? "verdict-flaky" : "verdict-fail");
           const tCls = (tP === tTot && tTot > 0) ? "verdict-pass" : (tP > 0 ? "verdict-flaky" : "verdict-fail");
-          const cCostStr = (cArm.is_metered !== false && cArm.mean_cost_usd !== null && cArm.mean_cost_usd !== undefined)
+          let cCostStr = (cArm.is_metered !== false && cArm.mean_cost_usd !== null && cArm.mean_cost_usd !== undefined)
             ? ("$" + Number(cArm.mean_cost_usd).toFixed(4))
             : t.unmetered;
-          const tCostStr = (tArm.is_metered !== false && tArm.mean_cost_usd !== null && tArm.mean_cost_usd !== undefined)
+          if (cArm.mean_relay_cost_usd !== null && cArm.mean_relay_cost_usd !== undefined) {{
+            cCostStr += " · relay $" + Number(cArm.mean_relay_cost_usd).toFixed(4);
+          }}
+          let tCostStr = (tArm.is_metered !== false && tArm.mean_cost_usd !== null && tArm.mean_cost_usd !== undefined)
             ? ("$" + Number(tArm.mean_cost_usd).toFixed(4))
             : t.unmetered;
+          if (tArm.mean_relay_cost_usd !== null && tArm.mean_relay_cost_usd !== undefined) {{
+            tCostStr += " · relay $" + Number(tArm.mean_relay_cost_usd).toFixed(4);
+          }}
           let deltaBadge = "<span class='delta-tag delta-tie'>" + esc(t.parity) + "</span>";
           if (deltaVal > 0) {{
             deltaBadge = "<span class='delta-tag delta-win'>+" + deltaVal + "/" + tTot + " " + esc(t.gainWord) + "</span>";
@@ -1574,6 +1719,35 @@ def render_arena_html(
             renderReplay();
           }});
         }});
+
+        document.getElementById("tl-heading").textContent = t.tlHeading;
+        document.getElementById("tl-th-task").textContent = t.mthId;
+        document.getElementById("tl-th-arm").textContent = t.thArm;
+        document.getElementById("tl-th-rep").textContent = t.tlRep;
+        document.getElementById("tl-th-res").textContent = t.tlRes;
+        document.getElementById("tl-th-xray").textContent = t.thXray;
+        document.getElementById("tl-th-relay").textContent = t.thRelay;
+        const allTrials = report.trials || [];
+        document.getElementById("trial-ledger-tbody").innerHTML = allTrials.map((tr) => {{
+          const u = tr.usage || {{}};
+          const uMet = u.is_metered !== false && u.total_cost_usd !== null && u.total_cost_usd !== undefined;
+          const xStr = uMet ? ("$" + Number(u.total_cost_usd).toFixed(4)) : t.unmetered;
+          const rStr = fmtUsd(u.relay_cost_usd);
+          const roleLbl = tr.contender_role === "treatment" ? t.roleTreatment : t.roleControl;
+          const ok = Boolean(tr.passed);
+          const pCls = ok ? "verdict-pass" : "verdict-fail";
+          const pTxt = ok ? (currentLang === "zh" ? "通过" : "PASS") : t.failBadge;
+          return (
+            "<tr>" +
+              "<td class='mono'>" + esc(tr.task_id) + "</td>" +
+              "<td class='mono'>" + esc(roleLbl) + "</td>" +
+              "<td class='mono'>" + Number(tr.rep_index || 1) + "</td>" +
+              "<td class='mono'><span class='verdict-pill " + pCls + "'>" + esc(pTxt) + "</span></td>" +
+              "<td class='mono'>" + esc(xStr) + "</td>" +
+              "<td class='mono'>" + esc(rStr) + "</td>" +
+            "</tr>"
+          );
+        }}).join("");
       }}
 
       function idxLabel(n, kind) {{
@@ -1601,6 +1775,7 @@ def render_arena_html(
         const totalCostMeta = uMetered
           ? ("$" + Number(usage.total_cost_usd).toFixed(4))
           : t.unmetered;
+        const relayCostMeta = fmtUsd(usage.relay_cost_usd);
 
         const stepCards = steps.map((s, idx) => {{
           const hi = (idx + 1) === activeStep ? "step-card is-highlighted" : "step-card";
@@ -1642,7 +1817,7 @@ def render_arena_html(
               '<div>' +
                 '<div class="arm-name">' + esc(localizeArmLabel(armMeta.label)) + '</div>' +
                 '<div class="arm-meta mono">' +
-                  esc(t.turn1Lbl + turn1Meta + " · " + t.totalCostLbl + totalCostMeta + " · " + t.latLbl) +
+                  esc(t.turn1Lbl + turn1Meta + " · " + t.totalCostLbl + totalCostMeta + " · " + t.relayCostLbl + relayCostMeta + " · " + t.latLbl) +
                   ((usage.total_latency_ms || 0) / 1000).toFixed(2) + "s" +
                 '</div>' +
               '</div>' +

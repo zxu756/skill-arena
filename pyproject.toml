@@ -51,3 +51,7 @@ packages = ["src/skill_arena"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+# Pinned sibling / programmatic dependency commit for agent-xray (branch m1/real):
+[tool.skill_arena]
+pinned_agent_xray_commit = "4bdbd92dc509d66c7427d0cde50ae0a5870652f6"

@@ -66,22 +66,6 @@ def _make_stub_cli(bin_dir: Path, name: str, python_body: str) -> Path:
     return script_path
 
 
-def _snapshot_tree(root: Path) -> dict[str, str]:
-    snap: dict[str, str] = {}
-    if not root.exists():
-        return snap
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames.sort()
-        for fn in sorted(filenames):
-            fp = Path(dirpath) / fn
-            rel = fp.relative_to(root).as_posix()
-            if fp.is_symlink():
-                snap[rel] = f"symlink:{os.readlink(fp)}"
-            elif fp.is_file():
-                snap[rel] = hashlib.sha256(fp.read_bytes()).hexdigest()
-    return snap
-
-
 def test_per_trial_isolated_home_control_zero_skills_treatment_only_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -96,9 +80,6 @@ def test_per_trial_isolated_home_control_zero_skills_treatment_only_candidate(
     d_claude.mkdir(parents=True)
     (d_claude / "SKILL.md").write_text("# host-claude-distractor\n", encoding="utf-8")
     (fake_host_home / ".claude" / "settings.json").write_text('{"theme":"dark"}\n', encoding="utf-8")
-
-    before_claude_snap = _snapshot_tree(fake_host_home / ".claude")
-    before_agents_snap = _snapshot_tree(fake_host_home / ".agents" / "skills")
 
     # Candidate skill for Treatment arm ONLY
     candidate_skill = tmp_path / "candidate-concurrency-guard"
@@ -215,10 +196,297 @@ def test_per_trial_isolated_home_control_zero_skills_treatment_only_candidate(
     assert treat_dump["claude_symlink_resolves"] is True
     assert treat_dump["agents_skill_resolves"] is True
 
-    # 4. Host directories completely untouched
+    # 4. Host directories do not contain trial marker writes
     assert not (fake_host_home / ".claude" / "probe.txt").exists()
-    assert _snapshot_tree(fake_host_home / ".claude") == before_claude_snap
-    assert _snapshot_tree(fake_host_home / ".agents" / "skills") == before_agents_snap
+
+
+def test_kr1_marker_isolation_passes_during_concurrent_real_claude_writes_and_no_directory_snapshots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    m1_script = (repo_root / "Scripts" / "acceptance" / "m1-acceptance.sh").read_text(encoding="utf-8")
+    assert "def snapshot_tree" not in m1_script, "KR1: full-directory snapshot_tree must be removed from m1-acceptance.sh"
+    assert "kr1_probe_" in m1_script, "KR1: m1-acceptance.sh must verify unique kr1_probe_<uuid> markers"
+
+    real_home = tmp_path / "real_home"
+    (real_home / ".claude").mkdir(parents=True)
+    (real_home / ".agents" / "skills").mkdir(parents=True)
+    live_session_file = real_home / ".claude" / "live_session.jsonl"
+    live_session_file.write_text('{"seq": 0}\n', encoding="utf-8")
+
+    probe_uuid = "7f8e9d0c1b2a"
+    probe_report = tmp_path / "kr1_probe_report.json"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _make_stub_cli(
+        bin_dir,
+        "claude",
+        (
+            "import json, os, sys, time\n"
+            "from pathlib import Path\n"
+            "_ = sys.stdin.read()\n"
+            "home = Path(os.environ['HOME'])\n"
+            f"claude_marker = home / '.claude' / 'kr1_probe_{probe_uuid}.marker'\n"
+            f"skill_marker = home / '.agents' / 'skills' / 'kr1_probe_{probe_uuid}' / 'SKILL.md'\n"
+            "claude_marker.parent.mkdir(parents=True, exist_ok=True)\n"
+            "skill_marker.parent.mkdir(parents=True, exist_ok=True)\n"
+            "claude_marker.write_text('isolated-claude-marker\\n', encoding='utf-8')\n"
+            "skill_marker.write_text('# isolated-skill-marker\\n', encoding='utf-8')\n"
+            "time.sleep(0.15)\n"
+            "report = {\n"
+            "    'trial_home': str(home),\n"
+            "    'claude_marker_written': claude_marker.is_file(),\n"
+            "    'skill_marker_written': skill_marker.is_file(),\n"
+            "}\n"
+            f"Path({str(probe_report)!r}).write_text(json.dumps(report), encoding='utf-8')\n"
+            "print(json.dumps({'result': 'KR1 probe written.\\nSTATUS: success', 'total_cost_usd': 0.001}))\n"
+        ),
+    )
+
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    stop_writer = threading.Event()
+    writes_done = 0
+
+    def _concurrent_claude_session_writer() -> None:
+        nonlocal writes_done
+        seq = 1
+        while not stop_writer.is_set():
+            with live_session_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"seq": seq}) + "\n")
+            writes_done += 1
+            seq += 1
+            time.sleep(0.02)
+
+    writer_thread = threading.Thread(target=_concurrent_claude_session_writer, daemon=True)
+    writer_thread.start()
+
+    task = load_builtin_suite()[0]
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    driver = HarnessDriver(pool)
+    ctrl = ContenderConfig(
+        contender_id="ctrl_kr1",
+        label="Control",
+        role="control",
+        cli="claude",
+        model="claude-sonnet-4-5",
+        skill_paths=[],
+    )
+    try:
+        trial = driver.run_trial("exp_kr1", task, ctrl, rep_index=1)
+    finally:
+        stop_writer.set()
+        writer_thread.join(timeout=2.0)
+        pool.close()
+
+    assert writes_done >= 2, "Expected concurrent live_session.jsonl writes during trial"
+    obs = json.loads(probe_report.read_text(encoding="utf-8"))
+    assert obs["claude_marker_written"] is True
+    assert obs["skill_marker_written"] is True
+    assert trial.usage.isolated_home_used is True
+    assert Path(obs["trial_home"]).resolve() != real_home.resolve()
+    assert not Path(obs["trial_home"]).exists()
+    assert not (real_home / ".claude" / f"kr1_probe_{probe_uuid}.marker").exists()
+    assert not (real_home / ".agents" / "skills" / f"kr1_probe_{probe_uuid}").exists()
+
+
+def test_kr4_strict_child_env_allowlist_blocks_ssh_claude_code_and_host_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_host_home = tmp_path / "fake_host_home"
+    fake_host_home.mkdir()
+    host_tmpdir = tmp_path / "host_tmpdir"
+    host_tmpdir.mkdir()
+    env_dump_path = tmp_path / "child_env_dump.json"
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _make_stub_cli(
+        bin_dir,
+        "claude",
+        (
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "_ = sys.stdin.read()\n"
+            "env_copy = dict(os.environ)\n"
+            "tmpdir_path = Path(env_copy.get('TMPDIR', ''))\n"
+            "payload = {\n"
+            "    'env': env_copy,\n"
+            "    'tmpdir_exists_during_trial': tmpdir_path.is_dir() if env_copy.get('TMPDIR') else False,\n"
+            "    'home_exists_during_trial': Path(env_copy.get('HOME', '')).is_dir(),\n"
+            "}\n"
+            f"Path({str(env_dump_path)!r}).write_text(json.dumps(payload, indent=2), encoding='utf-8')\n"
+            "print(json.dumps({'result': 'Dumped env.\\nSTATUS: success', 'total_cost_usd': 0.001}))\n"
+        ),
+    )
+
+    monkeypatch.setenv("HOME", str(fake_host_home))
+    monkeypatch.setenv("TMPDIR", str(host_tmpdir))
+    monkeypatch.setenv("TEMP", str(host_tmpdir))
+    monkeypatch.setenv("TMP", str(host_tmpdir))
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/fake-ssh.sock")
+    monkeypatch.setenv("SSH_AGENT_PID", "999")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "secret-msg-token")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-12345")
+    monkeypatch.setenv("CLAUDE_CODE_EXECPATH", "/bin/claude")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    monkeypatch.setenv("RANDOM_HOST_SECRET", "leak-me-not")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-allowed-key")
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    task = load_builtin_suite()[0]
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    driver = HarnessDriver(pool)
+    ctrl = ContenderConfig(
+        contender_id="ctrl_kr4",
+        label="Control",
+        role="control",
+        cli="claude",
+        model="claude-sonnet-4-5",
+        skill_paths=[],
+    )
+    try:
+        driver.run_trial("exp_kr4", task, ctrl, rep_index=1)
+    finally:
+        pool.close()
+
+    dumped = json.loads(env_dump_path.read_text(encoding="utf-8"))
+    child_env: dict[str, str] = dumped["env"]
+
+    assert "SSH_AUTH_SOCK" not in child_env
+    assert "SSH_AGENT_PID" not in child_env
+    assert "CLAUDECODE" not in child_env
+    assert [k for k in child_env if k.startswith("CLAUDE_CODE_")] == []
+    assert "AWS_SECRET_ACCESS_KEY" not in child_env
+    assert "GITHUB_TOKEN" not in child_env
+    assert "RANDOM_HOST_SECRET" not in child_env
+
+    # Allowed provider key and isolated paths ARE present
+    assert child_env.get("ANTHROPIC_API_KEY") == "sk-ant-allowed-key"
+    assert dumped["home_exists_during_trial"] is True
+    assert dumped["tmpdir_exists_during_trial"] is True
+    assert Path(child_env["HOME"]).resolve() != fake_host_home.resolve()
+    assert Path(child_env["TMPDIR"]).resolve() != host_tmpdir.resolve()
+    assert child_env["TEMP"] == child_env["TMPDIR"]
+    assert child_env["TMP"] == child_env["TMPDIR"]
+    assert child_env.get("XDG_STATE_HOME") == f"{child_env['HOME']}/.local/state"
+    assert not Path(child_env["HOME"]).exists(), "Isolated HOME must be cleaned up post-trial"
+    assert not Path(child_env["TMPDIR"]).exists(), "Isolated TMPDIR must be cleaned up post-trial"
+
+
+def test_kr4_default_no_auth_copy_leaves_zero_credentials_in_isolated_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from skill_arena.cli import main
+
+    fake_host_home = tmp_path / "host_with_creds"
+    seeded_creds = (
+        ".claude/.credentials.json",
+        ".claude.json",
+        ".codex/auth.json",
+        ".config/opencode/auth.json",
+        ".vibe/.env",
+    )
+    for rel in seeded_creds:
+        p = fake_host_home / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f'{{"secret_for": "{rel}"}}\n', encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(fake_host_home))
+    monkeypatch.setattr("skill_arena.sandbox.skill_injector._real_account_home", lambda: fake_host_home)
+
+    cred_obs_dir = tmp_path / "cred_obs"
+    cred_obs_dir.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _make_stub_cli(
+        bin_dir,
+        "claude",
+        (
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "_ = sys.stdin.read()\n"
+            "home = Path(os.environ['HOME'])\n"
+            f"candidates = {list(seeded_creds)!r}\n"
+            "present = [rel for rel in candidates if (home / rel).exists()]\n"
+            "all_files = sorted(\n"
+            "    str(p.relative_to(home)) for p in home.rglob('*') if p.is_file() or p.is_symlink()\n"
+            ")\n"
+            "contender = os.environ.get('SKILL_ARENA_CONTENDER', 'unknown')\n"
+            "payload = {\n"
+            "    'trial_home': str(home),\n"
+            "    'present_credentials': present,\n"
+            "    'all_files_in_home': all_files,\n"
+            "    'ssh_auth_sock_present': 'SSH_AUTH_SOCK' in os.environ,\n"
+            "}\n"
+            f"(Path({str(cred_obs_dir)!r}) / f'{{contender}}.json').write_text(json.dumps(payload), encoding='utf-8')\n"
+            "print(json.dumps({'result': 'Checked creds.\\nSTATUS: success', 'total_cost_usd': 0.001}))\n"
+        ),
+    )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/should-not-leak.sock")
+
+    suite_file = tmp_path / "one_task.json"
+    t0 = load_builtin_suite()[0]
+    suite_file.write_text(json.dumps([t0.to_dict()]), encoding="utf-8")
+    skill_dir = tmp_path / "dummy-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Dummy Skill\n", encoding="utf-8")
+    db_path = tmp_path / "kr4_default.sqlite"
+
+    rc = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(suite_file),
+            "--skill",
+            str(skill_dir),
+            "--reps",
+            "1",
+            "--db",
+            str(db_path),
+        ]
+    )
+    assert rc == 0
+
+    obs_files = sorted(cred_obs_dir.glob("*.json"))
+    assert len(obs_files) == 2
+    for obs_file in obs_files:
+        obs = json.loads(obs_file.read_text(encoding="utf-8"))
+        assert obs["present_credentials"] == [], (
+            f"Default run (no --copy-auth) leaked credentials into isolated HOME: {obs}"
+        )
+        assert obs["ssh_auth_sock_present"] is False
+    ctrl_obs = json.loads((cred_obs_dir / "arm_control.json").read_text(encoding="utf-8"))
+    assert ctrl_obs["all_files_in_home"] == []
+
+
+def test_kr4_readmes_disclose_host_env_only_isolation_boundary_bilingually() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    assert "getpwuid" in readme_en
+    assert "environment variables" in readme_en.lower()
+    assert "outside the worktree" in readme_en.lower()
+    assert "AgentVM" in readme_en
+
+    assert "getpwuid" in readme_zh
+    assert "环境变量" in readme_zh
+    assert "worktree" in readme_zh or "工作区以外" in readme_zh
+    assert "AgentVM" in readme_zh
 
 
 def test_relay_sh_integration_parses_log_md_strips_relay_worker_and_cleans_workspace(

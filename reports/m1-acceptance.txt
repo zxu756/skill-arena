@@ -6,11 +6,11 @@ Workspace: <REPO_ROOT> (branch: m1/real)
 [Row 1/7] Per-trial isolated HOME & skill directories (Control=0 skills, Treatment=only candidate)...
   ROW 1 [PASS]: Control global_skills=0, workspace_skills=0; Treatment saw ONLY 'candidate-alpha' (0 host skills leaked); isolated HOMEs distinct & cleaned up.
 
-[Row 2/7] Host ~/.claude & ~/.agents/skills SHA-256 snapshot + ~/.claude write probe + relay.sh & sole proxy check...
-  ROW 2 [PASS]: Stub wrote ~/.claude/m1_row2_probe.txt inside isolated HOME; real ~/.claude (files=2458, sha256=320e0f0487f4e053...) & ~/.agents/skills (files=1607, sha256=ba9aee0b6011a8ae...) 100% unchanged; relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned.
+[Row 2/7] Marker-file isolation probe ($HOME/.claude/kr1_probe_<uuid>.marker & $HOME/.agents/skills/kr1_probe_<uuid>/SKILL.md) + relay.sh & pinned agent-xray check...
+  ROW 2 [PASS]: Stub wrote 2x kr1_probe_<uuid> markers inside isolated HOME (.claude/*.marker & .agents/skills/*/SKILL.md verified True during trial); 0 markers in real ~/.claude or ~/.agents/skills; pinned agent-xray=4bdbd92dc5; relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned.
 
 [Row 3/7] Fake SSE upstream emitting 1 event every 200ms (TTFT error <= 50ms)...
-  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[212.09, 206.75, 210.65, 203.33, 206.69], actual_first_chunk_ms=[210.25, 205.68, 210.08, 202.45, 205.75], min_abs_err=0.57ms, median_abs_err=0.94ms, max_abs_err=1.85ms (<= 50.0 ms), total_stream_ms=[1034, 1028, 1032, 1030, 1033]
+  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[211.92, 206.35, 202.02, 202.75, 202.45], actual_first_chunk_ms=[210.3, 205.17, 201.45, 202.14, 201.82], min_abs_err=0.57ms, median_abs_err=0.64ms, max_abs_err=1.62ms (<= 50.0 ms), total_stream_ms=[1035, 1040, 1022, 1029, 1038]
 
 [Row 4/7] OpenAI Responses API (/v1/responses) streaming SSE & non-streaming JSON usage...
   ROW 4 [PASS]: /v1/responses streaming SSE & non-streaming JSON both recorded exact uncached_input=400, cached_input=800, total_prompt=1200, output=150, cost_usd=$0.002100.
@@ -19,7 +19,7 @@ Workspace: <REPO_ROOT> (branch: m1/real)
   ROW 5 [PASS]: 20 vs 20 equal-rate trials (10/20 vs 10/20) -> delta=+0.0000, 95% Newcombe-Wilson CI=[-0.2838, +0.2838], verdict='inconclusive' ('看不出差别' / 'Inconclusive'), winner=None, ranks=[None, None], HTML craft 0 warnings.
 
 [Part 2 / K13] Detached double-fork + setsid + close-fds + chdir('/') check under isolated HOME...
-  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [37109, 37192] killed, recorded in leaked_processes, and trials marked FAILED (1.83s).
+  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [31691, 31779] killed, recorded in leaked_processes, and trials marked FAILED (2.40s).
 
 [Row 6/7] Live 8-task real-agent A/B gate (SKILL_ARENA_REAL_AB)...
   SKIPPED (没跑): SKILL_ARENA_REAL_AB!=1; live paid 8-task real-agent A/B requires explicit user approval and API budget.
@@ -34,5 +34,6 @@ Workspace: <REPO_ROOT> (branch: m1/real)
   ROW 7 [PASS]: All 6 M1 mutations failed their exact named tests (exit 1) and restored cleanly.
 
 ================================================================
+M1 ACCEPTANCE SUMMARY: 6 passed, 1 skipped
 RESULT: ALL M1 OFFLINE ACCEPTANCE CHECKS & 6 MUTATIONS PASSED (Row 6 live A/B: SKIPPED / 没跑)
 ================================================================

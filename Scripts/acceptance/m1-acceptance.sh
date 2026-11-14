@@ -105,24 +105,29 @@ workspace_skill_mds = collect_skill_mds(
 record = {
     "contender": os.environ.get("SKILL_ARENA_CONTENDER"),
     "home": str(home),
+    "tmpdir": os.environ.get("TMPDIR"),
     "xdg_config_home": os.environ.get("XDG_CONFIG_HOME"),
     "xdg_data_home": os.environ.get("XDG_DATA_HOME"),
+    "xdg_state_home": os.environ.get("XDG_STATE_HOME"),
     "xdg_cache_home": os.environ.get("XDG_CACHE_HOME"),
     "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
     "codex_home": os.environ.get("CODEX_HOME"),
     "vibe_home": os.environ.get("VIBE_HOME"),
+    "ssh_auth_sock_present": "SSH_AUTH_SOCK" in os.environ,
+    "claude_code_keys": sorted(k for k in os.environ if k.startswith("CLAUDE_CODE_") or k == "CLAUDECODE"),
+    "leaked_secret_present": "RANDOM_HOST_SECRET" in os.environ,
     "global_skill_mds": global_skill_mds,
     "workspace_skill_mds": workspace_skill_mds,
 }
-obs_file = Path(os.environ["SA_ROW1_OBS_DIR"]) / f"{record['contender']}_{uuid.uuid4().hex[:6]}.json"
+obs_file = Path("${OBS_DIR}") / f"{record['contender']}_{uuid.uuid4().hex[:6]}.json"
 obs_file.write_text(json.dumps(record, indent=2), encoding="utf-8")
-shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
+shutil.copyfile("${REF_SOLUTION_FILE}", "rate_limiter.py")
 print(json.dumps({"result": "Verified isolated HOME.\nSTATUS: success", "total_cost_usd": 0.01, "session_id": "r1"}))
 PY
   chmod +x "${TMP_WORK}/bin/claude"
 
   ROW1_DB="${TMP_WORK}/row1.sqlite"
-  SA_ROW1_OBS_DIR="$OBS_DIR" SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" \
+  SSH_AUTH_SOCK="/tmp/fake-ssh.sock" CLAUDE_CODE_MESSAGING_TOKEN="leak-test" RANDOM_HOST_SECRET="leak-test" \
     RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang en run \
     --cli claude --model claude-sonnet-4-5 \
@@ -149,10 +154,15 @@ for r in (ctrl, treat):
     assert h != outer_home, f"Trial HOME matched outer caller HOME: {h}"
     assert r["xdg_config_home"] == f"{r['home']}/.config", r
     assert r["xdg_data_home"] == f"{r['home']}/.local/share", r
+    assert r["xdg_state_home"] == f"{r['home']}/.local/state", r
     assert r["xdg_cache_home"] == f"{r['home']}/.cache", r
     assert r["claude_config_dir"] == f"{r['home']}/.claude", r
     assert r["codex_home"] == f"{r['home']}/.codex", r
     assert r["vibe_home"] == f"{r['home']}/.vibe", r
+    assert r["ssh_auth_sock_present"] is False, f"SSH_AUTH_SOCK leaked into child env: {r}"
+    assert r["claude_code_keys"] == [], f"CLAUDE_CODE_* leaked into child env: {r['claude_code_keys']}"
+    assert r["leaked_secret_present"] is False, f"Host env leaked into child env: {r}"
+    assert r["tmpdir"] and not Path(r["tmpdir"]).exists(), f"Per-trial TMPDIR not cleaned up: {r['tmpdir']}"
     assert not Path(r["home"]).exists(), f"Temporary trial HOME was not cleaned up: {r['home']}"
 
 assert ctrl["home"] != treat["home"], "Control and Treatment must not share the same trial HOME"
@@ -176,23 +186,23 @@ print(
 PY
 
   # ------------------------------------------------------------------
-  # Row 2 (M1-2 + Item 2 K9): Stub writes into ~/.claude -> lands in isolated HOME; real ~/.claude & ~/.agents/skills unchanged; relay.sh + agent-xray end-to-end
+  # Row 2 (M1-2 + Item 2 K9 + KR1): Stub writes unique markers into $HOME/.claude & $HOME/.agents/skills -> lands in isolated HOME; real ~/.claude & ~/.agents/skills lack markers; relay.sh + pinned agent-xray end-to-end
   # ------------------------------------------------------------------
   echo ""
-  echo "[Row 2/7] Host ~/.claude & ~/.agents/skills SHA-256 snapshot + ~/.claude write probe + relay.sh & sole proxy check..."
+  echo '[Row 2/7] Marker-file isolation probe ($HOME/.claude/kr1_probe_<uuid>.marker & $HOME/.agents/skills/kr1_probe_<uuid>/SKILL.md) + relay.sh & pinned agent-xray check...'
   "$PYTHON" - "$ROOT_DIR" "$TMP_WORK" "$ONE_TASK_JSON" "$CANDIDATE_SKILL_DIR" "$REF_SOLUTION_FILE" <<'PY'
 from __future__ import annotations
 
-import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import pwd
-import shutil
 import subprocess
 import sys
 import threading
+
+from skill_arena.runners.xray_bridge import PINNED_AGENT_XRAY_COMMIT, get_agent_xray_commit
 
 repo_root = Path(sys.argv[1]).resolve()
 tmp_work = Path(sys.argv[2]).resolve()
@@ -200,33 +210,13 @@ task_json = Path(sys.argv[3]).resolve()
 skill_dir = Path(sys.argv[4]).resolve()
 ref_sol = Path(sys.argv[5]).resolve()
 real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+outer_home = Path(os.environ["HOME"]).resolve()
 
-
-def snapshot_tree(root: Path) -> tuple[int, str]:
-    if not root.exists():
-        return 0, hashlib.sha256(b"ABSENT").hexdigest()
-    agg = hashlib.sha256()
-    count = 0
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames.sort()
-        filenames.sort()
-        rel_d = os.path.relpath(dirpath, root)
-        agg.update(f"D:{rel_d}\n".encode())
-        for fn in filenames:
-            fp = Path(dirpath) / fn
-            rel_f = os.path.relpath(fp, root)
-            if fp.is_symlink():
-                agg.update(f"L:{rel_f}->{os.readlink(fp)}\n".encode())
-                count += 1
-            elif fp.is_file():
-                try:
-                    digest = hashlib.sha256(fp.read_bytes()).hexdigest()
-                    agg.update(f"F:{rel_f}:{digest}\n".encode())
-                    count += 1
-                except PermissionError:
-                    agg.update(f"P:{rel_f}\n".encode())
-    return count, agg.hexdigest()
-
+# Verify pinned agent-xray commit (4bdbd92dc509d66c7427d0cde50ae0a5870652f6)
+assert PINNED_AGENT_XRAY_COMMIT == "4bdbd92dc509d66c7427d0cde50ae0a5870652f6", PINNED_AGENT_XRAY_COMMIT
+resolved_xray_sha = get_agent_xray_commit()
+if resolved_xray_sha is not None:
+    assert resolved_xray_sha == PINNED_AGENT_XRAY_COMMIT, (resolved_xray_sha, PINNED_AGENT_XRAY_COMMIT)
 
 # Verify K7/K9 deletions: wire_tap_proxy.py deleted, no custom --dangerously-skip-permissions or second proxy
 assert not (repo_root / "src/skill_arena/runners/wire_tap_proxy.py").exists(), "wire_tap_proxy.py still exists!"
@@ -236,9 +226,6 @@ for py_path in (repo_root / "src/skill_arena").rglob("*.py"):
     assert "def build_cli_command" not in txt, f"Found build_cli_command in {py_path}"
     if py_path.name != "server.py":
         assert "BaseHTTPRequestHandler" not in txt, f"Unexpected HTTP server handler in {py_path}"
-
-claude_before = snapshot_tree(real_home / ".claude")
-skills_before = snapshot_tree(real_home / ".agents" / "skills")
 
 
 class _FakeAnthropicUpstream(BaseHTTPRequestHandler):
@@ -276,14 +263,18 @@ probe_log = tmp_work / "row2_probe_writes.jsonl"
 stub_claude = tmp_work / "bin" / "claude_row2"
 stub_claude.write_text(
     f"""#!{sys.executable}
-import json, os, shutil, sys, urllib.request
+import json, os, shutil, sys, urllib.request, uuid
 from pathlib import Path
 
 _ = sys.stdin.read()
 home = Path(os.environ["HOME"])
-probe_path = home / ".claude" / "m1_row2_probe.txt"
-probe_path.parent.mkdir(parents=True, exist_ok=True)
-probe_path.write_text("written-into-isolated-claude-dir\\n", encoding="utf-8")
+probe_uuid = uuid.uuid4().hex
+claude_marker = home / ".claude" / f"kr1_probe_{{probe_uuid}}.marker"
+skill_marker = home / ".agents" / "skills" / f"kr1_probe_{{probe_uuid}}" / "SKILL.md"
+claude_marker.parent.mkdir(parents=True, exist_ok=True)
+skill_marker.parent.mkdir(parents=True, exist_ok=True)
+claude_marker.write_text("written-into-isolated-claude-dir\\n", encoding="utf-8")
+skill_marker.write_text("# written-into-isolated-skills-dir\\n", encoding="utf-8")
 
 # Confirm outer RELAY_WORKER was stripped before invoking relay.sh (relay.sh sets its own step ID)
 assert os.environ.get("RELAY_WORKER") != "outer_conductor_step", os.environ.get("RELAY_WORKER")
@@ -299,7 +290,12 @@ with urllib.request.urlopen(req, timeout=5) as resp:
     assert resp.status == 200
 
 with open({str(probe_log)!r}, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps({{"probe_path": str(probe_path), "exists_during_trial": probe_path.is_file()}}) + "\\n")
+    fh.write(json.dumps({{
+        "probe_uuid": probe_uuid,
+        "trial_home": str(home),
+        "claude_marker_exists_during_trial": claude_marker.is_file(),
+        "skill_marker_exists_during_trial": skill_marker.is_file(),
+    }}) + "\\n")
 
 shutil.copyfile({str(ref_sol)!r}, "rate_limiter.py")
 print(json.dumps({{
@@ -353,20 +349,27 @@ finally:
     srv.shutdown()
     srv.server_close()
 
-claude_after = snapshot_tree(real_home / ".claude")
-skills_after = snapshot_tree(real_home / ".agents" / "skills")
-assert not (real_home / ".claude" / "m1_row2_probe.txt").exists(), "Probe leaked into real ~/.claude!"
-assert claude_before == claude_after, f"Real ~/.claude changed! before={claude_before} after={claude_after}"
-assert skills_before == skills_after, f"Real ~/.agents/skills changed! before={skills_before} after={skills_after}"
-
 probes = [json.loads(line) for line in probe_log.read_text(encoding="utf-8").splitlines() if line.strip()]
-assert len(probes) == 2 and all(p["exists_during_trial"] for p in probes), probes
+assert len(probes) == 2, probes
+for p in probes:
+    uid = p["probe_uuid"]
+    assert p["claude_marker_exists_during_trial"] is True, p
+    assert p["skill_marker_exists_during_trial"] is True, p
+    assert not (real_home / ".claude" / f"kr1_probe_{uid}.marker").exists(), f"Marker leaked into real ~/.claude: {uid}"
+    assert not (real_home / ".agents" / "skills" / f"kr1_probe_{uid}").exists(), f"Marker leaked into real ~/.agents/skills: {uid}"
+    assert not (outer_home / ".claude" / f"kr1_probe_{uid}.marker").exists(), f"Marker leaked into outer HOME/.claude: {uid}"
+    assert not (outer_home / ".agents" / "skills" / f"kr1_probe_{uid}").exists(), f"Marker leaked into outer HOME/.agents/skills: {uid}"
 
 from skill_arena.store.arena_db import ArenaDatabase
 
 db = ArenaDatabase(row2_db)
 exp_id = db.latest_experiment_id()
 assert exp_id is not None
+row2_report = db.build_comparison_report(exp_id)
+assert "$0.0150" in proc.stdout and "Relay LOG" in proc.stdout, proc.stdout
+for arm_summary in row2_report["arms"]:
+    assert arm_summary["metered_cost_usd"] is not None and arm_summary["metered_cost_usd"] > 0, arm_summary
+    assert arm_summary["relay_cost_usd"] == 0.015, arm_summary
 trials = db.get_trials(exp_id)
 assert len(trials) == 2
 for tr in trials:
@@ -381,9 +384,9 @@ for tr in trials:
     assert ".relay" not in tr.git_diff, tr.git_diff
 
 print(
-    f"  ROW 2 [PASS]: Stub wrote ~/.claude/m1_row2_probe.txt inside isolated HOME; "
-    f"real ~/.claude (files={claude_after[0]}, sha256={claude_after[1][:16]}...) & "
-    f"~/.agents/skills (files={skills_after[0]}, sha256={skills_after[1][:16]}...) 100% unchanged; "
+    f"  ROW 2 [PASS]: Stub wrote 2x kr1_probe_<uuid> markers inside isolated HOME "
+    f"(.claude/*.marker & .agents/skills/*/SKILL.md verified True during trial); "
+    f"0 markers in real ~/.claude or ~/.agents/skills; pinned agent-xray={PINNED_AGENT_XRAY_COMMIT[:10]}; "
     f"relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned."
 )
 PY
@@ -623,13 +626,13 @@ from pathlib import Path
 
 _ = sys.stdin.read()
 arm = os.environ.get("SKILL_ARENA_CONTENDER", "unknown")
-cnt_file = Path(os.environ["SA_ROW5_COUNTER_DIR"]) / f"{arm}.count"
+cnt_file = Path("${ROW5_COUNTER_DIR}") / f"{arm}.count"
 idx = int(cnt_file.read_text(encoding="utf-8")) if cnt_file.exists() else 0
 cnt_file.write_text(str(idx + 1), encoding="utf-8")
 
 # Identical 50% true pass rate (10/20 passed) in both Control and Treatment
 if idx % 2 == 0:
-    shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
+    shutil.copyfile("${REF_SOLUTION_FILE}", "rate_limiter.py")
 else:
     Path("rate_limiter.py").write_text("class TokenBucket:\n    pass\n", encoding="utf-8")
 
@@ -641,8 +644,7 @@ PY
   ROW5_HTML_ZH="${TMP_WORK}/row5_zh.html"
   ROW5_HTML_EN="${TMP_WORK}/row5_en.html"
 
-  ROW5_OUT_ZH="$(SA_ROW5_COUNTER_DIR="$ROW5_COUNTER_DIR" SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" \
-    RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude_row5" PATH="${TMP_WORK}/bin:${PATH}" \
+  ROW5_OUT_ZH="$(RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude_row5" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang zh run \
     --cli claude --model claude-sonnet-4-5 \
     --skill "$CANDIDATE_SKILL_DIR" \
@@ -710,7 +712,7 @@ from pathlib import Path
 
 _ = sys.stdin.read()
 assert os.environ.get("SKILL_ARENA_ISOLATED_HOME") == "1", os.environ.get("SKILL_ARENA_ISOLATED_HOME")
-shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
+shutil.copyfile("${REF_SOLUTION_FILE}", "rate_limiter.py")
 pid1 = os.fork()
 if pid1 == 0:
     os.setsid()
@@ -726,7 +728,7 @@ if pid1 == 0:
         os.dup2(dn, 0); os.dup2(dn, 1); os.dup2(dn, 2)
         if dn > 2:
             os.close(dn)
-        with Path(os.environ["SA_K13_PID_LOG"]).open("a", encoding="utf-8") as fh:
+        with Path("${K13_PIDS}").open("a", encoding="utf-8") as fh:
             fh.write(f"{os.getpid()}\n")
         os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)"])
     os._exit(0)
@@ -737,8 +739,7 @@ PY
 
   K13_DB="${TMP_WORK}/k13_isolated.sqlite"
   K13_T0="$("$PYTHON" -c 'import time; print(time.monotonic())')"
-  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" SA_K13_PID_LOG="$K13_PIDS" \
-    RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude_k13" PATH="${TMP_WORK}/bin:${PATH}" \
+  RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude_k13" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang en run \
     --cli claude --model claude-sonnet-4-5 \
     --skill "$CANDIDATE_SKILL_DIR" \
@@ -782,23 +783,17 @@ PY
   # ------------------------------------------------------------------
   echo ""
   echo "[Row 6/7] Live 8-task real-agent A/B gate (SKILL_ARENA_REAL_AB)..."
+  ROW6_PASSED=0
+  ROW6_SKIPPED=0
   if [[ "${SKILL_ARENA_REAL_AB:-${RELAY_REAL_AGENTS:-0}}" == "1" ]]; then
-    echo "  SKILL_ARENA_REAL_AB=1 enabled: running live real-agent A/B..."
-    REAL_SKILL="${SKILL_ARENA_REAL_SKILL:-}"
-    if [[ -z "$REAL_SKILL" || ! -e "$REAL_SKILL" ]]; then
-      echo "FAIL: Set SKILL_ARENA_REAL_SKILL=<path/to/skill> when SKILL_ARENA_REAL_AB=1" >&2
-      exit 2
-    fi
-    "$PYTHON" -m skill_arena.cli --lang en run \
-      --cli "${SKILL_ARENA_REAL_CLI:-claude}" \
-      --model "${SKILL_ARENA_REAL_MODEL:-claude-sonnet-4-5}" \
-      --skill "$REAL_SKILL" \
-      --reps "${SKILL_ARENA_REAL_REPS:-1}" \
-      --budget-usd "${RELAY_BUDGET_USD:-5.0}" \
-      --copy-auth \
-      --db "${TMP_WORK}/real_ab.sqlite"
+    echo "  SKILL_ARENA_REAL_AB=1 enabled: running live real-agent A/B via real-ab-gate.py..."
+    "$PYTHON" "${ROOT_DIR}/Scripts/acceptance/real-ab-gate.py" \
+      --db "${TMP_WORK}/real_ab.sqlite" \
+      --html-out "${TMP_WORK}/real_ab.html"
+    ROW6_PASSED=1
   else
     echo "  SKIPPED (没跑): SKILL_ARENA_REAL_AB!=1; live paid 8-task real-agent A/B requires explicit user approval and API budget."
+    ROW6_SKIPPED=1
   fi
 
   # ------------------------------------------------------------------
@@ -969,8 +964,10 @@ target_file.write_text(src.replace(needle, "    elif False and (ci_low <= 0.0 <=
 
   echo "  ROW 7 [PASS]: All 6 M1 mutations failed their exact named tests (exit 1) and restored cleanly."
 
+  M1_PASSED=$((6 + ROW6_PASSED))
   echo ""
   echo "================================================================"
+  echo "M1 ACCEPTANCE SUMMARY: ${M1_PASSED} passed, ${ROW6_SKIPPED} skipped"
   echo "RESULT: ALL M1 OFFLINE ACCEPTANCE CHECKS & 6 MUTATIONS PASSED (Row 6 live A/B: SKIPPED / 没跑)"
   echo "================================================================"
 }

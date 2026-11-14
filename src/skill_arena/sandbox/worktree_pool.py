@@ -516,13 +516,14 @@ class WorktreeSandboxPool:
         stdin_text: str | None = None,
         reap_sandbox_cwd: bool = False,
         unset_env: tuple[str, ...] = (),
+        inherit_parent_env: bool = True,
     ) -> BoundedCommandOutcome:
         """Execute a command in its own session, kill its group on timeout, and reap detached descendants."""
-        merged_env = os.environ.copy()
-        for key in unset_env:
-            merged_env.pop(key, None)
+        merged_env = os.environ.copy() if inherit_parent_env else {}
         if env:
             merged_env.update(env)
+        for key in unset_env:
+            merged_env.pop(key, None)
         trial_token = merged_env.get("SKILL_ARENA_TRIAL_TOKEN") or f"sa_trial_{uuid.uuid4().hex}"
         merged_env["SKILL_ARENA_TRIAL_TOKEN"] = trial_token
 

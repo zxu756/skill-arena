@@ -15,6 +15,72 @@ import urllib.parse
 
 from skill_arena.models import TokenUsageLedger
 
+PINNED_AGENT_XRAY_COMMIT = "4bdbd92dc509d66c7427d0cde50ae0a5870652f6"
+
+
+def get_agent_xray_commit(target: ModuleType | Path | None = None) -> str | None:
+    """Return the 40-char git HEAD commit when `agent_xray` is loaded from an `agent-xray` git checkout."""
+    probe_path: Path | None = None
+    if target is None:
+        mod = _load_agent_xray(verify_pin=False)
+        mod_file = getattr(mod, "__file__", None)
+        if mod_file:
+            probe_path = Path(mod_file).resolve()
+    elif isinstance(target, ModuleType):
+        mod_file = getattr(target, "__file__", None)
+        if mod_file:
+            probe_path = Path(mod_file).resolve()
+    else:
+        probe_path = Path(target).resolve()
+
+    if probe_path is None:
+        return None
+    probe_dir = probe_path if probe_path.is_dir() else probe_path.parent
+    if not probe_dir.exists():
+        return None
+
+    try:
+        top_proc = subprocess.run(
+            ["git", "-C", str(probe_dir), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if top_proc.returncode != 0:
+            return None
+        toplevel = Path(top_proc.stdout.strip()).resolve()
+        checkout_pkg = (toplevel / "src" / "agent_xray").resolve()
+        if not (checkout_pkg / "__init__.py").is_file():
+            return None
+        if not (probe_dir == toplevel or probe_dir == toplevel / "src" or probe_dir.is_relative_to(checkout_pkg)):
+            return None
+        sha_proc = subprocess.run(
+            ["git", "-C", str(toplevel), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if sha_proc.returncode != 0:
+            return None
+        sha = sha_proc.stdout.strip()
+        return sha or None
+    except OSError:
+        return None
+
+
+def _verify_agent_xray_pin(mod: ModuleType, *, verify_pin: bool) -> ModuleType:
+    if not verify_pin:
+        return mod
+    actual_sha = get_agent_xray_commit(mod)
+    if actual_sha is not None and actual_sha != PINNED_AGENT_XRAY_COMMIT:
+        raise RuntimeError(
+            f"Loaded agent-xray git checkout is at {actual_sha}, expected "
+            f"PINNED_AGENT_XRAY_COMMIT={PINNED_AGENT_XRAY_COMMIT}."
+        )
+    return mod
+
 
 def _candidate_xray_src_from_git_origin(repo_root: Path, *, max_hops: int = 5) -> list[Path]:
     """Follow local `remote.origin.url` chain (cycle-guarded) to locate sibling `agent-xray/src`."""
@@ -59,13 +125,17 @@ def _candidate_xray_src_from_git_origin(repo_root: Path, *, max_hops: int = 5) -
     return candidates
 
 
-def _load_agent_xray(repo_root: Path | None = None) -> ModuleType:
+def _load_agent_xray(
+    repo_root: Path | None = None,
+    *,
+    verify_pin: bool = True,
+) -> ModuleType:
     """Import `agent_xray` without hardcoded user paths across direct, sibling, and local-clone setups."""
     if repo_root is None:
         try:
             mod = importlib.import_module("agent_xray")
             if hasattr(mod, "start_background_proxy"):
-                return mod
+                return _verify_agent_xray_pin(mod, verify_pin=verify_pin)
         except ImportError:
             pass
 
@@ -87,7 +157,7 @@ def _load_agent_xray(repo_root: Path | None = None) -> ModuleType:
                 sys.path.insert(0, src_str)
             mod = importlib.import_module("agent_xray")
             if hasattr(mod, "start_background_proxy"):
-                return mod
+                return _verify_agent_xray_pin(mod, verify_pin=verify_pin)
 
     raise ImportError(
         "Unable to locate `agent_xray`: install `agent-xray`, set `AGENT_XRAY_SRC` to `agent-xray/src`, "
@@ -161,7 +231,7 @@ class XRayMeteringBridge:
             db_path=":memory:",
             anthropic_upstream=self.anthropic_upstream,
             openai_upstream=self.openai_upstream,
-            strip_telemetry_headers=False,
+            strip_telemetry=False,
             block_secrets=False,
             store_previews=False,
         )

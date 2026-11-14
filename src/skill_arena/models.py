@@ -279,6 +279,8 @@ class TrialResult:
             "passed": self.passed,
             "anti_cheat_clean": self.anti_cheat_clean,
             "leaked_processes": list(self.verdict.leaked_processes),
+            "metered_cost_usd": self.usage.total_cost_usd if self.usage.is_metered else None,
+            "relay_cost_usd": self.usage.relay_cost_usd,
             "usage": self.usage.to_dict(),
             "verdict": self.verdict.to_dict(),
             "steps": [s.to_dict() for s in self.steps],
@@ -317,6 +319,9 @@ class LeaderboardSummary:
     is_metered: bool = False
     usage_status: str = "unmetered"
     is_simulated: bool = False
+    metered_cost_usd: float | None = None
+    total_relay_cost_usd: float | None = None
+    relay_cost_usd: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

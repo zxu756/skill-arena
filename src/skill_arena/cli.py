@@ -67,6 +67,7 @@ def run_ab_experiment(
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
     verify_suite_runners_available(tasks)
     is_sim_exp = any(c.cli.split(":", 1)[0] == "simulate" for c in contenders)
+    planned_trials = len(tasks) * len(contenders) * int(k_reps)
     db.create_experiment(
         exp_id,
         title=title,
@@ -74,6 +75,8 @@ def run_ab_experiment(
         k_reps=k_reps,
         contenders=contenders,
         is_simulated=is_sim_exp,
+        budget_usd=budget_usd,
+        planned_trials=planned_trials,
     )
 
     is_zh = lang == "zh"
@@ -93,32 +96,68 @@ def run_ab_experiment(
         budget_usd=budget_usd,
     )
     try:
+        stop_loop = False
         for task in tasks:
+            if stop_loop:
+                break
             for contender in contenders:
+                if stop_loop:
+                    break
                 for rep in range(1, k_reps + 1):
+                    can_start, _rem_budget = driver.can_start_next_trial()
+                    if not can_start:
+                        stop_loop = True
+                        if not quiet:
+                            if is_zh:
+                                print(
+                                    f"[预算上限停止] 实验总预算上限 ${float(budget_usd or 0.0):.4f}，"
+                                    f"当前累计花费 ${driver.cumulative_cost_usd:.4f}，"
+                                    f"在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止以避免超出预算。"
+                                )
+                            else:
+                                print(
+                                    f"[BUDGET STOPPED] Experiment budget ceiling ${float(budget_usd or 0.0):.4f} "
+                                    f"(cumulative spend ${driver.cumulative_cost_usd:.4f}): "
+                                    f"halting before trial {driver.completed_trials + 1}/{planned_trials} to avoid exceeding budget."
+                                )
+                        break
+
                     result = driver.run_trial(exp_id, task, contender, rep_index=rep)
                     db.record_trial(result)
                     if not quiet:
                         cost_txt = (
-                            f"${result.usage.total_cost_usd:.4f}"
+                            f"xray=${result.usage.total_cost_usd:.4f}"
                             if (result.usage.is_metered and result.usage.total_cost_usd is not None)
-                            else ("未计量" if is_zh else "Unmetered")
+                            else ("xray=未计量" if is_zh else "xray=Unmetered")
+                        )
+                        relay_txt = (
+                            f"relay=${result.usage.relay_cost_usd:.4f}"
+                            if result.usage.relay_cost_usd is not None
+                            else "relay=n/a"
                         )
                         if is_zh:
                             sim_tag = "[SIMULATED / 模拟数据] " if result.is_simulated else ""
                             badge = "通过" if result.passed else "失败"
                             print(
                                 f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (第 {rep}/{k_reps} 轮) "
-                                f"| {cost_txt} | {result.usage.total_latency_ms}ms"
+                                f"| {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
                             )
                         else:
                             sim_tag = "[SIMULATED] " if result.is_simulated else ""
                             badge = "PASS" if result.passed else "FAIL"
                             print(
                                 f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (rep {rep}/{k_reps}) "
-                                f"| {cost_txt} | {result.usage.total_latency_ms}ms"
+                                f"| {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
                             )
     finally:
+        db.update_experiment_budget_state(
+            exp_id,
+            budget_usd=budget_usd,
+            cumulative_cost_usd=driver.cumulative_cost_usd,
+            budget_stopped=driver.budget_stopped,
+            planned_trials=planned_trials,
+            completed_trials=driver.completed_trials,
+        )
         pool.close()
     return exp_id
 
@@ -127,35 +166,86 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
     is_zh = lang == "zh"
     k_reps = int(report.get("k_reps", 3))
     is_sim = bool(report.get("is_simulated"))
+    budget_val = report.get("budget_usd")
+    cum_cost_val = float(report.get("cumulative_cost_usd") or 0.0)
+    budget_stopped = bool(report.get("budget_stopped"))
+    planned_n = int(report.get("planned_trials") or 0)
+    completed_n = int(report.get("completed_trials") or 0)
     if is_zh:
         if is_sim:
             print("\n[SIMULATED / 模拟数据] 提示：以下数字由内置合成模拟器生成，不代表任何真实模型或技能的表现。")
+        if budget_stopped and budget_val is not None:
+            print(
+                f"\n[预算上限停止] 实验总预算上限 ${float(budget_val):.4f}，累计花费 ${cum_cost_val:.4f}，"
+                f"已完成 {completed_n}/{planned_n} 次试验（在超出预算前停止）。"
+            )
+        elif budget_val is not None:
+            print(
+                f"\n预算统计：实验总预算上限 ${float(budget_val):.4f}，累计花费 ${cum_cost_val:.4f}，"
+                f"已完成 {completed_n}/{planned_n} 次试验。"
+            )
         print(f"\n=== {report['title']}（实验编号：{report['experiment_id']}）===")
         hdr = (
-            f"{pad_cell('参赛组别', 34)} {pad_cell('角色', 8)} "
-            f"{pad_cell('胜率Elo', 9, 'right')} {pad_cell('Pass@1', 8, 'right')} "
-            f"{pad_cell(f'Pass^{k_reps}', 8, 'right')} {pad_cell('单次成功成本', 12, 'right')} "
-            f"{pad_cell('首轮上下文税', 14, 'right')} {pad_cell('防作弊率', 10, 'right')}"
+            f"{pad_cell('参赛组别', 32)} {pad_cell('角色', 8)} "
+            f"{pad_cell('胜率Elo', 8, 'right')} {pad_cell('Pass@1', 8, 'right')} "
+            f"{pad_cell(f'Pass^{k_reps}', 8, 'right')} {pad_cell('代理总花费', 11, 'right')} "
+            f"{pad_cell('Relay花费', 11, 'right')} {pad_cell('单次成功成本', 12, 'right')} "
+            f"{pad_cell('首轮上下文税', 13, 'right')} {pad_cell('防作弊率', 9, 'right')}"
         )
         print(hdr)
-        print("-" * 110)
+        print("-" * 130)
         for row in report["leaderboard"]:
             metered = bool(row.get("is_metered", True))
             if not metered:
+                xray_tot = "未计量"
                 cps = "未计量"
                 delta = "未计量"
             else:
+                xray_tot = f"${row['total_spend_usd']:.4f}" if row.get("total_spend_usd") is not None else "n/a"
                 cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
                 ovh_val = row.get("context_overhead_delta_tokens")
                 delta = f"{int(ovh_val):+d} tok" if ovh_val is not None else "未计量"
+            relay_tot = (
+                f"${float(row['total_relay_cost_usd']):.4f}"
+                if row.get("total_relay_cost_usd") is not None
+                else "n/a"
+            )
             role_disp = ROLE_ZH.get(row["role"], row["role"])
             elo_str = str(row.get("elo_rating", 1500))
             print(
-                f"{pad_cell(str(row['label'])[:33], 34)} {pad_cell(role_disp, 8)} "
-                f"{elo_str:>9} {row['pass_at_1'] * 100:7.1f}% "
-                f"{row['pass_hat_k'] * 100:7.1f}% {pad_cell(cps, 12, 'right')} {pad_cell(delta, 14, 'right')} "
-                f"{row['anti_cheat_integrity_rate'] * 100:9.1f}%"
+                f"{pad_cell(str(row['label'])[:31], 32)} {pad_cell(role_disp, 8)} "
+                f"{elo_str:>8} {row['pass_at_1'] * 100:7.1f}% "
+                f"{row['pass_hat_k'] * 100:7.1f}% {pad_cell(xray_tot, 11, 'right')} "
+                f"{pad_cell(relay_tot, 11, 'right')} {pad_cell(cps, 12, 'right')} "
+                f"{pad_cell(delta, 13, 'right')} {row['anti_cheat_integrity_rate'] * 100:8.1f}%"
             )
+        trial_rows = list(report.get("trials") or [])
+        if trial_rows:
+            print("\n--- 逐试次费用台账（agent-xray 代理花费 vs Relay LOG.md 花费）---")
+            print(
+                f"{pad_cell('任务ID', 28)} {pad_cell('角色', 8)} {pad_cell('轮次', 6, 'right')} "
+                f"{pad_cell('结果', 6)} {pad_cell('代理花费', 11, 'right')} {pad_cell('Relay花费', 11, 'right')}"
+            )
+            for tr in trial_rows:
+                u = tr.get("usage") or {}
+                t_metered = bool(u.get("is_metered", False))
+                t_xray = (
+                    f"${float(u['total_cost_usd']):.4f}"
+                    if (t_metered and u.get("total_cost_usd") is not None)
+                    else ("未计量" if not t_metered else "n/a")
+                )
+                t_relay = (
+                    f"${float(u['relay_cost_usd']):.4f}"
+                    if u.get("relay_cost_usd") is not None
+                    else "n/a"
+                )
+                t_role = ROLE_ZH.get(str(tr.get("contender_role", "")), str(tr.get("contender_role", "")))
+                t_res = "通过" if tr.get("passed") else "失败"
+                print(
+                    f"{pad_cell(str(tr.get('task_id', ''))[:27], 28)} {pad_cell(t_role, 8)} "
+                    f"{int(tr.get('rep_index', 1)):>6d} {pad_cell(t_res, 6)} "
+                    f"{pad_cell(t_xray, 11, 'right')} {pad_cell(t_relay, 11, 'right')}"
+                )
         stat_comp = report.get("statistical_comparison") or {}
         if stat_comp:
             delta_pp = float(stat_comp.get("delta_pass_rate", 0.0)) * 100.0
@@ -170,27 +260,68 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
 
     if is_sim:
         print("\n[SIMULATED] Notice: Synthetic calibration numbers only - does not reflect any real model or skill.")
+    if budget_stopped and budget_val is not None:
+        print(
+            f"\n[BUDGET STOPPED] Budget ceiling ${float(budget_val):.4f} reached before next trial: "
+            f"cumulative spend ${cum_cost_val:.4f}, completed {completed_n}/{planned_n} planned trials."
+        )
+    elif budget_val is not None:
+        print(
+            f"\nBudget ceiling: ${float(budget_val):.4f} | cumulative spend ${cum_cost_val:.4f} | "
+            f"completed {completed_n}/{planned_n} trials."
+        )
     print(f"\n=== {report['title']} ({report['experiment_id']}) ===")
     print(
-        f"{'Contender':<34} {'Role':<10} {'WR Elo':>7} {'Pass@1':>8} {f'Pass^{k_reps}':>8} "
-        f"{'Cost/Succ':>11} {'Turn-1 Tax':>14} {'Integrity':>10}"
+        f"{'Contender':<32} {'Role':<10} {'WR Elo':>7} {'Pass@1':>8} {f'Pass^{k_reps}':>8} "
+        f"{'XRay Spend':>11} {'Relay LOG':>11} {'Cost/Succ':>11} {'Turn-1 Tax':>13} {'Integrity':>10}"
     )
-    print("-" * 108)
+    print("-" * 130)
     for row in report["leaderboard"]:
         metered = bool(row.get("is_metered", True))
         if not metered:
+            xray_tot = "Unmetered"
             cps = "Unmetered"
             delta = "Unmetered"
         else:
+            xray_tot = f"${row['total_spend_usd']:.4f}" if row.get("total_spend_usd") is not None else "n/a"
             cps = f"${row['cost_per_success_usd']:.4f}" if row["cost_per_success_usd"] is not None else "n/a"
             ovh_val = row.get("context_overhead_delta_tokens")
             delta = f"{int(ovh_val):+d} tok" if ovh_val is not None else "Unmetered"
+        relay_tot = (
+            f"${float(row['total_relay_cost_usd']):.4f}"
+            if row.get("total_relay_cost_usd") is not None
+            else "n/a"
+        )
         elo_str = str(row.get("elo_rating", 1500))
         print(
-            f"{row['label'][:33]:<34} {row['role']:<10} {elo_str:>7} "
+            f"{row['label'][:31]:<32} {row['role']:<10} {elo_str:>7} "
             f"{row['pass_at_1'] * 100:7.1f}% {row['pass_hat_k'] * 100:7.1f}% "
-            f"{cps:>11} {delta:>14} {row['anti_cheat_integrity_rate'] * 100:9.1f}%"
+            f"{xray_tot:>11} {relay_tot:>11} {cps:>11} {delta:>13} {row['anti_cheat_integrity_rate'] * 100:9.1f}%"
         )
+    trial_rows = list(report.get("trials") or [])
+    if trial_rows:
+        print("\n--- Per-Trial Cost Ledger (agent-xray wire spend vs Relay LOG.md step spend) ---")
+        print(
+            f"{'Task ID':<28} {'Role':<10} {'Rep':>4} {'Result':<6} {'XRay Spend':>11} {'Relay LOG':>11}"
+        )
+        for tr in trial_rows:
+            u = tr.get("usage") or {}
+            t_metered = bool(u.get("is_metered", False))
+            t_xray = (
+                f"${float(u['total_cost_usd']):.4f}"
+                if (t_metered and u.get("total_cost_usd") is not None)
+                else ("Unmetered" if not t_metered else "n/a")
+            )
+            t_relay = (
+                f"${float(u['relay_cost_usd']):.4f}"
+                if u.get("relay_cost_usd") is not None
+                else "n/a"
+            )
+            t_res = "PASS" if tr.get("passed") else "FAIL"
+            print(
+                f"{str(tr.get('task_id', ''))[:27]:<28} {str(tr.get('contender_role', '')):<10} "
+                f"{int(tr.get('rep_index', 1)):>4d} {t_res:<6} {t_xray:>11} {t_relay:>11}"
+            )
     stat_comp = report.get("statistical_comparison") or {}
     if stat_comp:
         delta_pp = float(stat_comp.get("delta_pass_rate", 0.0)) * 100.0
@@ -261,7 +392,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--budget-usd",
         type=float,
         default=None,
-        help="Optional USD budget cap passed to agent-relay (`RELAY_BUDGET_USD`).",
+        help="Experiment-wide cumulative USD ceiling across all trials (tracks cumulative spend and halts before exceeding budget).",
     )
     p_run.add_argument(
         "--copy-auth",
@@ -330,6 +461,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        if args.budget_usd is not None and float(args.budget_usd) <= 0.0:
+            msg = (
+                f"错误：`--budget-usd` 必须大于 0（收到 {args.budget_usd}）。"
+                if is_zh
+                else f"Error: `--budget-usd` must be positive (got {args.budget_usd})."
+            )
+            print(msg, file=sys.stderr)
+            return 2
         raw_cli = str(args.cli).strip()
         base_cli = raw_cli.split(":", 1)[0]
         if base_cli == "mock":

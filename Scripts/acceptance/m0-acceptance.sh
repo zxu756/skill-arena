@@ -214,14 +214,14 @@ Path(sys.argv[1]).write_text(t.reference_solution_files["rate_limiter.py"], enco
 PY
   cat > "${TMP_WORK}/bin/claude" <<PY
 #!${PYTHON}
-import os, shutil, sys, time
+import shutil, sys, time
 _ = sys.stdin.read()
-shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
+shutil.copyfile("${REF_SOLUTION_FILE}", "rate_limiter.py")
 time.sleep(15)
 PY
   chmod +x "${TMP_WORK}/bin/claude"
   ROW4_DB="${TMP_WORK}/row4.sqlite"
-  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
+  RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" "$PYTHON" -m skill_arena.cli --lang en run \
     --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW4_DB" >/dev/null
   "$PYTHON" - "$ROW4_DB" <<'PY'
@@ -247,7 +247,7 @@ PY
 import json, os, shutil, sys
 from pathlib import Path
 _ = sys.stdin.read()
-shutil.copyfile(os.environ["SA_REF_SOLUTION_FILE"], "rate_limiter.py")
+shutil.copyfile("${REF_SOLUTION_FILE}", "rate_limiter.py")
 pid1 = os.fork()
 if pid1 == 0:
     os.setsid()
@@ -263,7 +263,7 @@ if pid1 == 0:
         os.dup2(dn, 0); os.dup2(dn, 1); os.dup2(dn, 2)
         if dn > 2:
             os.close(dn)
-        with Path(os.environ["SA_ORPHAN_PID_LOG"]).open("a", encoding="utf-8") as fh:
+        with Path("${ORPHAN_PID_LOG}").open("a", encoding="utf-8") as fh:
             fh.write(f"{os.getpid()}\n")
         os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)"])
     os._exit(0)
@@ -273,7 +273,7 @@ PY
   chmod +x "${TMP_WORK}/bin/claude"
   ROW5_DB="${TMP_WORK}/row5.sqlite"
   T_START="$("$PYTHON" -c 'import time; print(time.monotonic())')"
-  SA_REF_SOLUTION_FILE="$REF_SOLUTION_FILE" SA_ORPHAN_PID_LOG="$ORPHAN_PID_LOG" RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" \
+  RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang en run \
     --cli claude --model stub-m \
     --suite "$ONE_TASK_JSON" --reps 1 --db "$ROW5_DB" >/dev/null

@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 
 import pytest
 
 from skill_arena.cli import main
 from skill_arena.graders.frontend_craft import audit_html_craft
 from skill_arena.store.arena_db import ArenaDatabase
+from skill_arena.suites.builtin_tasks import load_builtin_suite
 
 
 def _write_executable(path: Path, body: str) -> Path:
@@ -598,4 +600,443 @@ def test_acceptance_scripts_report_skipped_separately_from_passed() -> None:
     assert "ALL PARSED README COMMANDS VERIFIED" not in readme_replay_sh
     assert "skipped_count" in readme_replay_sh and "passed_count" in readme_replay_sh
     assert "skipped" in test_sh
+
+
+def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KR2: 每次试验花 0.01、预算 0.015、reps 2 时在超出前停下 (plus 0.025 and 0.005 cases)."""
+    one_task = load_builtin_suite(category="concurrency")[0]
+    task_file = tmp_path / "one_task.json"
+    task_file.write_text(json.dumps(one_task.to_dict(), indent=2), encoding="utf-8")
+
+    ref_sol = tmp_path / "ref_rate_limiter.py"
+    ref_sol.write_text(one_task.reference_solution_files["rate_limiter.py"], encoding="utf-8")
+
+    seen_budgets_log = tmp_path / "seen_budgets.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = bin_dir / "claude"
+    stub_claude.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, shutil, sys\n"
+        "from pathlib import Path\n"
+        "_ = sys.stdin.read()\n"
+        f"with open({str(seen_budgets_log)!r}, 'a', encoding='utf-8') as fh:\n"
+        "    fh.write(json.dumps({'relay_budget_usd': os.environ.get('RELAY_BUDGET_USD')}) + '\\n')\n"
+        f"shutil.copyfile({str(ref_sol)!r}, 'rate_limiter.py')\n"
+        "print(json.dumps({'result': 'Done.\\nSTATUS: success', 'total_cost_usd': 0.01, 'session_id': 'kr2'}))\n",
+        encoding="utf-8",
+    )
+    stub_claude.chmod(0o755)
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    # Case 1 (Mandatory): $0.01/trial, --budget-usd 0.015, --reps 2 (4 planned trials) -> stops after 1 trial ($0.01 <= $0.015)
+    db_015 = tmp_path / "budget_015.sqlite"
+    html_015_en = tmp_path / "budget_015_en.html"
+    html_015_zh = tmp_path / "budget_015_zh.html"
+    rc1 = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(task_file),
+            "--reps",
+            "2",
+            "--budget-usd",
+            "0.015",
+            "--db",
+            str(db_015),
+            "--html-out",
+            str(html_015_en),
+        ]
+    )
+    out1_en = capsys.readouterr().out
+    assert rc1 == 0
+    seen_1 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(seen_1) == 1, f"Expected to halt after 1 trial before exceeding $0.015, ran {len(seen_1)}"
+    assert float(seen_1[0]["relay_budget_usd"]) == pytest.approx(0.015)
+
+    assert "BUDGET STOPPED" in out1_en or "Budget ceiling" in out1_en
+    assert main(["--lang", "zh", "compare", "--db", str(db_015)]) == 0
+    out1_zh = capsys.readouterr().out
+    assert "预算" in out1_zh and ("停止" in out1_zh or "上限" in out1_zh)
+
+    assert main(["compare", "--db", str(db_015), "--json"]) == 0
+    rep1 = json.loads(capsys.readouterr().out)
+    assert rep1["budget_usd"] == pytest.approx(0.015)
+    assert rep1["cumulative_cost_usd"] == pytest.approx(0.01)
+    assert rep1["cumulative_cost_usd"] <= 0.015
+    assert rep1["planned_trials"] == 4
+    assert rep1["completed_trials"] == 1
+    assert rep1["budget_stopped"] is True
+    assert rep1["budget_halted"] is True
+
+    assert main(["--lang", "zh", "export-html", "--db", str(db_015), "--out", str(html_015_zh)]) == 0
+    capsys.readouterr()
+    assert "0.015" in html_015_en.read_text(encoding="utf-8")
+    assert "预算" in html_015_zh.read_text(encoding="utf-8")
+    assert audit_html_craft(html_015_en).passed
+    assert audit_html_craft(html_015_zh).passed
+
+    # Case 2: --budget-usd 0.025 with $0.01/trial -> stops after 2 trials ($0.02 <= $0.025), passing remaining budget
+    seen_budgets_log.unlink()
+    db_025 = tmp_path / "budget_025.sqlite"
+    assert (
+        main(
+            [
+                "--lang",
+                "en",
+                "run",
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--suite",
+                str(task_file),
+                "--reps",
+                "2",
+                "--budget-usd",
+                "0.025",
+                "--db",
+                str(db_025),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    seen_2 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(seen_2) == 2
+    assert float(seen_2[0]["relay_budget_usd"]) == pytest.approx(0.025)
+    assert float(seen_2[1]["relay_budget_usd"]) == pytest.approx(0.015)
+    rep2 = ArenaDatabase(db_025).build_comparison_report(ArenaDatabase(db_025).latest_experiment_id() or "")
+    assert rep2["completed_trials"] == 2
+    assert rep2["cumulative_cost_usd"] == pytest.approx(0.02)
+    assert rep2["budget_stopped"] is True
+
+    # Case 3: --budget-usd 0.005 where Trial 1 spends $0.01 -> stops immediately after Trial 1 (0 subsequent trials)
+    seen_budgets_log.unlink()
+    db_005 = tmp_path / "budget_005.sqlite"
+    assert (
+        main(
+            [
+                "--lang",
+                "en",
+                "run",
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--suite",
+                str(task_file),
+                "--reps",
+                "2",
+                "--budget-usd",
+                "0.005",
+                "--db",
+                str(db_005),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    seen_3 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(seen_3) == 1
+    rep3 = ArenaDatabase(db_005).build_comparison_report(ArenaDatabase(db_005).latest_experiment_id() or "")
+    assert rep3["completed_trials"] == 1
+    assert rep3["budget_stopped"] is True
+
+    # Case 4: Bilingual README parity check for experiment-wide cumulative ceiling
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "cumulative" in readme_en.lower() and "--budget-usd" in readme_en
+    assert "累计" in readme_zh and "--budget-usd" in readme_zh
+
+
+def test_kr3_cli_json_and_html_display_both_xray_and_relay_costs(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KR3: CLI (EN & ZH), JSON arms/trials, and HTML report show both agent-xray and .relay/LOG.md costs."""
+    from skill_arena.models import (
+        ContenderConfig,
+        GraderVerdict,
+        TokenUsageLedger,
+        TrajectoryStep,
+        TrialResult,
+    )
+
+    db_path = tmp_path / "kr3_cli.sqlite"
+    db = ArenaDatabase(db_path)
+    ctrl = ContenderConfig(contender_id="arm_control", label="claude (control)", role="control", cli="claude", model="claude-sonnet-4-5")
+    treat = ContenderConfig(contender_id="arm_treatment", label="claude (+skill)", role="treatment", cli="claude", model="claude-sonnet-4-5")
+    db.create_experiment("exp_kr3_cli", title="Dual Cost Report", suite_name="concurrency", k_reps=1, contenders=[ctrl, treat])
+
+    for arm, xray_cost, relay_cost in ((ctrl, 0.0019, 0.0142), (treat, 0.0027, 0.0188)):
+        db.record_trial(
+            TrialResult(
+                trial_id=f"tr_{arm.contender_id}",
+                experiment_id="exp_kr3_cli",
+                task_id="conc-01-token-bucket-race",
+                task_title="Thread-Safe Token Bucket Rate Limiter",
+                task_category="concurrency",
+                contender_id=arm.contender_id,
+                contender_label=arm.label,
+                contender_role=arm.role,
+                rep_index=1,
+                passed=True,
+                anti_cheat_clean=True,
+                usage=TokenUsageLedger(
+                    turns=1,
+                    uncached_input_tokens=300,
+                    first_turn_prompt_tokens=400,
+                    total_prompt_tokens=400,
+                    cached_prompt_tokens=100,
+                    completion_tokens=60,
+                    ttft_ms=25.0,
+                    total_latency_ms=120,
+                    total_cost_usd=xray_cost,
+                    is_metered=True,
+                    usage_status="metered",
+                    relay_status="ok",
+                    relay_cost_usd=relay_cost,
+                    isolated_home_used=True,
+                ),
+                verdict=GraderVerdict(passed=True, exit_code=0, anti_cheat_clean=True, summary="Unit tests passed (exit 0)"),
+                steps=[TrajectoryStep(step_index=1, timestamp_ms=50, kind="verify", summary="Deterministic Grader -> PASS", detail="ok")],
+                git_diff="--- a/rate_limiter.py\n+++ b/rate_limiter.py\n",
+                started_at="2026-11-15T00:00:00Z",
+                finished_at="2026-11-15T00:00:01Z",
+            )
+        )
+
+    assert main(["--lang", "en", "compare", "--db", str(db_path)]) == 0
+    out_en = capsys.readouterr().out
+    assert "$0.0019" in out_en and "$0.0142" in out_en
+    assert "$0.0027" in out_en and "$0.0188" in out_en
+    assert "Relay" in out_en
+
+    assert main(["--lang", "zh", "compare", "--db", str(db_path)]) == 0
+    out_zh = capsys.readouterr().out
+    assert "$0.0019" in out_zh and "$0.0142" in out_zh
+    assert "$0.0027" in out_zh and "$0.0188" in out_zh
+    assert "Relay" in out_zh
+
+    html_en = tmp_path / "kr3_en.html"
+    html_zh = tmp_path / "kr3_zh.html"
+    assert main(["--lang", "en", "export-html", "--db", str(db_path), "--out", str(html_en)]) == 0
+    assert main(["--lang", "zh", "export-html", "--db", str(db_path), "--out", str(html_zh)]) == 0
+    capsys.readouterr()
+
+    txt_en = html_en.read_text(encoding="utf-8")
+    txt_zh = html_zh.read_text(encoding="utf-8")
+    for txt in (txt_en, txt_zh):
+        assert "$0.0019" in txt and "$0.0142" in txt
+        assert "$0.0027" in txt and "$0.0188" in txt
+    assert audit_html_craft(html_en).passed
+    assert audit_html_craft(html_zh).passed
+
+
+def test_kr5_simulated_verdict_line_carries_simulated_tag_in_cli_and_html(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KR5: --cli simulate final verdict line in EN/ZH CLI and HTML includes [SIMULATED] / [SIMULATED | 模拟]."""
+    db_win = tmp_path / "sim_win.sqlite"
+    html_en = tmp_path / "sim_win_en.html"
+    html_zh = tmp_path / "sim_win_zh.html"
+
+    # concurrency x 5 reps = 10 trials per arm -> simulated Treatment wins with 95% CI > 0
+    assert (
+        main(
+            [
+                "--lang",
+                "en",
+                "run",
+                "--cli",
+                "simulate",
+                "--suite",
+                "concurrency",
+                "--reps",
+                "5",
+                "--db",
+                str(db_win),
+                "--html-out",
+                str(html_en),
+            ]
+        )
+        == 0
+    )
+    out_en = capsys.readouterr().out
+    verdict_lines_en = [ln for ln in out_en.splitlines() if ln.startswith("Verdict:")]
+    assert len(verdict_lines_en) == 1
+    assert verdict_lines_en[0].startswith(
+        "Verdict: [SIMULATED] Treatment statistically outperforms Control"
+    ), verdict_lines_en[0]
+
+    assert main(["--lang", "zh", "compare", "--db", str(db_win)]) == 0
+    out_zh = capsys.readouterr().out
+    verdict_lines_zh = [ln for ln in out_zh.splitlines() if ln.startswith("统计结论：")]
+    assert len(verdict_lines_zh) == 1
+    assert verdict_lines_zh[0].startswith("统计结论：[SIMULATED | 模拟] 实验组显著占优"), verdict_lines_zh[0]
+
+    assert main(["--lang", "zh", "export-html", "--db", str(db_win), "--out", str(html_zh)]) == 0
+    capsys.readouterr()
+
+    html_en_txt = html_en.read_text(encoding="utf-8")
+    html_zh_txt = html_zh.read_text(encoding="utf-8")
+    assert "Verdict: [SIMULATED] Treatment wins (95% CI &gt; 0)" in html_en_txt or (
+        "Verdict: [SIMULATED] Treatment wins (95% CI > 0)" in html_en_txt
+    )
+    assert "结论：[SIMULATED | 模拟] 实验组显著占优" in html_zh_txt
+    assert audit_html_craft(html_en).passed
+    assert audit_html_craft(html_zh).passed
+
+
+def test_kr5_readmes_disclose_newcombe_wilson_repeated_reps_independence_assumption() -> None:
+    """KR5: Both READMEs disclose that Newcombe-Wilson treats repeated task runs (--reps > 1) as independent samples."""
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    assert "independent" in readme_en.lower()
+    assert "--reps" in readme_en
+    assert "narrower" in readme_en.lower()
+
+    assert "独立样本" in readme_zh or "独立试验" in readme_zh
+    assert "--reps" in readme_zh
+    assert "偏窄" in readme_zh
+
+
+def test_kr5_real_ab_gate_script_executes_offline_against_local_stub_and_fake_upstream(
+    tmp_path: Path,
+) -> None:
+    """KR5: Scripts/acceptance/real-ab-gate.py is wired into test.sh/m1-acceptance.sh and runs end-to-end offline."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    repo_root = Path(__file__).resolve().parents[1]
+    gate_script = repo_root / "Scripts" / "acceptance" / "real-ab-gate.py"
+    assert gate_script.is_file(), "Missing Scripts/acceptance/real-ab-gate.py"
+
+    test_sh = (repo_root / "Scripts" / "test.sh").read_text(encoding="utf-8")
+    m1_sh = (repo_root / "Scripts" / "acceptance" / "m1-acceptance.sh").read_text(encoding="utf-8")
+    assert "real-ab-gate.py" in test_sh
+    assert "real-ab-gate.py" in m1_sh
+
+    class _FakeAnthropicSSE(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args: object) -> None:
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            n = int(self.headers.get("Content-Length", "0"))
+            _ = self.rfile.read(n)
+            sse = (
+                b'event: message_start\n'
+                b'data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":320,"cache_read_input_tokens":80,"output_tokens":1}}}\n\n'
+                b'event: message_delta\n'
+                b'data: {"type":"message_delta","usage":{"output_tokens":45}}\n\n'
+                b'event: message_stop\n'
+                b'data: {"type":"message_stop"}\n\n'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(sse)))
+            self.end_headers()
+            self.wfile.write(sse)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _FakeAnthropicSSE)
+    srv_thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    srv_thread.start()
+    upstream_url = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    try:
+        t0 = load_builtin_suite()[0]
+        ref_code = t0.reference_solution_files["rate_limiter.py"]
+        suite_path = tmp_path / "gate_one_task.json"
+        suite_path.write_text(json.dumps([t0.to_dict()]), encoding="utf-8")
+
+        skill_dir = tmp_path / "gate-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# Gate Skill\nUse lock.\n", encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_claude = _write_executable(
+            bin_dir / "claude",
+            (
+                f"#!{sys.executable}\n"
+                "import json, os, sys, urllib.request\n"
+                "from pathlib import Path\n"
+                "_ = sys.stdin.read()\n"
+                "base = os.environ['ANTHROPIC_BASE_URL'].rstrip('/')\n"
+                "req = urllib.request.Request(\n"
+                "    base + '/v1/messages',\n"
+                "    data=json.dumps({'model': 'claude-sonnet-4-5-20250929', 'stream': True}).encode('utf-8'),\n"
+                "    headers={'Content-Type': 'application/json'},\n"
+                "    method='POST',\n"
+                ")\n"
+                "with urllib.request.urlopen(req, timeout=5) as resp:\n"
+                "    _ = resp.read()\n"
+                f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
+                "print(json.dumps({'result': 'Fixed.\\nSTATUS: success', 'total_cost_usd': 0.0085}))\n"
+            ),
+        )
+
+        db_out = tmp_path / "gate.sqlite"
+        html_out = tmp_path / "gate.html"
+        env = os.environ.copy()
+        env["HOME"] = str(tmp_path / "isolated_caller_home")
+        Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
+        env["RELAY_CLAUDE_BIN"] = str(stub_claude)
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(gate_script),
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--suite",
+                str(suite_path),
+                "--skill",
+                str(skill_dir),
+                "--reps",
+                "1",
+                "--budget-usd",
+                "0.50",
+                "--no-copy-auth",
+                "--upstream-url",
+                upstream_url,
+                "--db",
+                str(db_out),
+                "--html-out",
+                str(html_out),
+            ],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert proc.returncode == 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        assert "REAL_AB_GATE PASS" in proc.stdout
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+
 

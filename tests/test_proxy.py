@@ -15,7 +15,12 @@ import urllib.request
 
 import pytest
 
-from skill_arena.runners.xray_bridge import XRayMeteringBridge, _load_agent_xray
+from skill_arena.runners.xray_bridge import (
+    PINNED_AGENT_XRAY_COMMIT,
+    XRayMeteringBridge,
+    _load_agent_xray,
+    get_agent_xray_commit,
+)
 
 
 def test_load_agent_xray_without_hardcoded_paths_and_sole_proxy_in_src(
@@ -348,3 +353,50 @@ def test_zero_turns_proxy_summarize_reports_unmetered() -> None:
     assert ledger.first_turn_prompt_tokens is None
     assert ledger.total_prompt_tokens is None
     assert ledger.total_cost_usd is None
+
+
+def test_pinned_agent_xray_commit_matches_loaded_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert PINNED_AGENT_XRAY_COMMIT == "4bdbd92dc509d66c7427d0cde50ae0a5870652f6"
+    xray_mod = _load_agent_xray()
+    resolved_sha = get_agent_xray_commit(xray_mod)
+    assert resolved_sha == PINNED_AGENT_XRAY_COMMIT
+
+    # Also verify a mismatched git checkout fails pin verification unless overridden with verify_pin=False
+    fake_xray_repo = tmp_path / "agent-xray"
+    fake_pkg = fake_xray_repo / "src" / "agent_xray"
+    fake_pkg.mkdir(parents=True)
+    (fake_pkg / "__init__.py").write_text(
+        "def start_background_proxy(**kwargs):\n    return None\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(fake_xray_repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(fake_xray_repo), "config", "user.name", "T"], check=True)
+    subprocess.run(["git", "-C", str(fake_xray_repo), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(["git", "-C", str(fake_xray_repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(fake_xray_repo), "commit", "-q", "-m", "unpinned"], check=True)
+
+    fake_arena_repo = tmp_path / "skill-arena"
+    fake_arena_repo.mkdir()
+    monkeypatch.delenv("AGENT_XRAY_SRC", raising=False)
+    cleaned_sys_path = [p for p in sys.path if "agent-xray" not in p and "agent_xray" not in p]
+    monkeypatch.setattr(sys, "path", cleaned_sys_path)
+    saved_modules = {k: v for k, v in sys.modules.items() if k == "agent_xray" or k.startswith("agent_xray.")}
+    for k in list(saved_modules):
+        sys.modules.pop(k, None)
+    try:
+        with pytest.raises(RuntimeError, match="PINNED_AGENT_XRAY_COMMIT|4bdbd92"):
+            _load_agent_xray(repo_root=fake_arena_repo, verify_pin=True)
+        for k in list(sys.modules):
+            if k == "agent_xray" or k.startswith("agent_xray."):
+                sys.modules.pop(k, None)
+        unpinned_mod = _load_agent_xray(repo_root=fake_arena_repo, verify_pin=False)
+        assert hasattr(unpinned_mod, "start_background_proxy")
+    finally:
+        for k in list(sys.modules):
+            if k == "agent_xray" or k.startswith("agent_xray."):
+                sys.modules.pop(k, None)
+        sys.modules.update(saved_modules)
+

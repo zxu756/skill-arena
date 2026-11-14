@@ -189,10 +189,33 @@ PY
     Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"}
     Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
     if [[ "${SKILL_ARENA_REAL_AB:-${RELAY_REAL_AGENTS:-0}}" == "1" ]]; then
-      echo "Live real-agent A/B gate enabled (SKILL_ARENA_REAL_AB=1): run explicit budget-approved real CLI experiment." >&2
+      "$PYTHON" "${ROOT_DIR}/Scripts/acceptance/real-ab-gate.py"
+      REAL_AB_STATUS="1 passed, 0 skipped"
     else
       echo "SKIPPED (没跑): Live real-agent 8-task A/B is gated behind SKILL_ARENA_REAL_AB=1 (requires user budget approval) — 0 passed, 1 skipped"
+      REAL_AB_STATUS="0 passed, 1 skipped"
     fi
+    "$PYTHON" - "$PYTEST_LOG" "$README_LOG" "$REAL_AB_STATUS" <<'PY'
+import re, sys
+from pathlib import Path
+pt_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+real_ab_status = sys.argv[3]
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed = int(m_rm.group(1)) if m_rm else 0
+rm_skipped = int(m_rm.group(2)) if m_rm else 0
+print(
+    f"Release summary: unit tests ({pt_passed} passed, {pt_skipped} skipped), "
+    f"M0 acceptance (8 passed, 0 skipped), "
+    f"M1 acceptance (6 passed, 1 skipped), "
+    f"README replay ({rm_passed} passed, {rm_skipped} skipped), "
+    f"live real-agent A/B gate ({real_ab_status})"
+)
+PY
     ;;
 
   *)

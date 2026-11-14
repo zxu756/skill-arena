@@ -136,7 +136,12 @@ class ArenaDatabase:
                     k_reps INTEGER NOT NULL,
                     contenders_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    is_simulated INTEGER NOT NULL DEFAULT 0
+                    is_simulated INTEGER NOT NULL DEFAULT 0,
+                    budget_usd REAL,
+                    cumulative_cost_usd REAL,
+                    budget_stopped INTEGER NOT NULL DEFAULT 0,
+                    planned_trials INTEGER,
+                    completed_trials INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS trials (
@@ -166,6 +171,11 @@ class ArenaDatabase:
             )
             for alter_sql in (
                 "ALTER TABLE experiments ADD COLUMN is_simulated INTEGER NOT NULL DEFAULT 0;",
+                "ALTER TABLE experiments ADD COLUMN budget_usd REAL;",
+                "ALTER TABLE experiments ADD COLUMN cumulative_cost_usd REAL;",
+                "ALTER TABLE experiments ADD COLUMN budget_stopped INTEGER NOT NULL DEFAULT 0;",
+                "ALTER TABLE experiments ADD COLUMN planned_trials INTEGER;",
+                "ALTER TABLE experiments ADD COLUMN completed_trials INTEGER;",
                 "ALTER TABLE trials ADD COLUMN is_simulated INTEGER NOT NULL DEFAULT 0;",
             ):
                 try:
@@ -181,6 +191,8 @@ class ArenaDatabase:
         k_reps: int,
         contenders: list[ContenderConfig],
         is_simulated: bool | None = None,
+        budget_usd: float | None = None,
+        planned_trials: int | None = None,
     ) -> None:
         sim = (
             bool(is_simulated)
@@ -195,8 +207,9 @@ class ArenaDatabase:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO experiments
-                (experiment_id, title, suite_name, k_reps, contenders_json, created_at, is_simulated)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (experiment_id, title, suite_name, k_reps, contenders_json, created_at, is_simulated,
+                 budget_usd, cumulative_cost_usd, budget_stopped, planned_trials, completed_trials)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     experiment_id,
@@ -206,6 +219,42 @@ class ArenaDatabase:
                     json.dumps([c.to_dict() for c in contenders]),
                     now,
                     1 if sim else 0,
+                    float(budget_usd) if budget_usd is not None else None,
+                    0.0 if budget_usd is not None else None,
+                    0,
+                    int(planned_trials) if planned_trials is not None else None,
+                    0 if planned_trials is not None else None,
+                ),
+            )
+
+    def update_experiment_budget_state(
+        self,
+        experiment_id: str,
+        *,
+        budget_usd: float | None,
+        cumulative_cost_usd: float,
+        budget_stopped: bool,
+        planned_trials: int,
+        completed_trials: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE experiments
+                SET budget_usd = ?,
+                    cumulative_cost_usd = ?,
+                    budget_stopped = ?,
+                    planned_trials = ?,
+                    completed_trials = ?
+                WHERE experiment_id = ?
+                """,
+                (
+                    float(budget_usd) if budget_usd is not None else None,
+                    round(float(cumulative_cost_usd), 6),
+                    1 if budget_stopped else 0,
+                    int(planned_trials),
+                    int(completed_trials),
+                    experiment_id,
                 ),
             )
 
@@ -391,7 +440,9 @@ class ArenaDatabase:
                 int(statistics.median(t.usage.total_latency_ms for t in c_trials)) if c_trials else 0
             )
             integrity_rate = (
-                sum(1 for t in c_trials if t.anti_cheat_clean) / max(1, trials_total)
+                (sum(1 for t in c_trials if t.anti_cheat_clean) / trials_total)
+                if trials_total > 0
+                else 1.0
             )
 
             if c.contender_id == control_cid or not ctrl_outcome_map or not c_trials:
@@ -419,6 +470,12 @@ class ArenaDatabase:
             arm_isolated = bool(c.isolate_home) and (
                 arm_sim or not c_trials or all(t.usage.isolated_home_used for t in c_trials)
             )
+            relay_cost_vals = [
+                float(t.usage.relay_cost_usd)
+                for t in c_trials
+                if t.usage.relay_cost_usd is not None
+            ]
+            total_relay_spend = round(sum(relay_cost_vals), 4) if relay_cost_vals else None
             leaderboard.append(
                 LeaderboardSummary(
                     contender_id=c.contender_id,
@@ -445,6 +502,9 @@ class ArenaDatabase:
                     is_metered=arm_metered,
                     usage_status=arm_status,
                     is_simulated=arm_sim,
+                    metered_cost_usd=total_spend,
+                    total_relay_cost_usd=total_relay_spend,
+                    relay_cost_usd=total_relay_spend,
                 )
             )
 
@@ -461,6 +521,10 @@ class ArenaDatabase:
             treatment_passed=treat_summary.trials_passed if treat_summary else 0,
             treatment_trials=treat_summary.trials_total if treat_summary else 0,
         )
+        stat_comp["is_simulated"] = exp_is_simulated
+        if exp_is_simulated:
+            stat_comp["verdict_label_zh"] = f"[SIMULATED | 模拟] {stat_comp['verdict_label_zh']}"
+            stat_comp["verdict_label_en"] = f"[SIMULATED] {stat_comp['verdict_label_en']}"
         winner_id = stat_comp["winner"]
         if winner_id is not None:
             for row in leaderboard:
@@ -489,6 +553,11 @@ class ArenaDatabase:
                     x.usage.total_cost_usd is not None for x in arm_trs
                 )
                 arm_task_sim = c.cli.split(":", 1)[0] == "simulate" or any(x.is_simulated for x in arm_trs)
+                task_relay_vals = [
+                    float(x.usage.relay_cost_usd)
+                    for x in arm_trs
+                    if x.usage.relay_cost_usd is not None
+                ]
                 arms_data[c.contender_id] = {
                     "passed_count": passed_n,
                     "total_reps": len(arm_trs),
@@ -499,6 +568,21 @@ class ArenaDatabase:
                     "mean_cost_usd": (
                         round(statistics.mean(float(x.usage.total_cost_usd or 0.0) for x in arm_trs), 4)
                         if arm_task_costs_known
+                        else None
+                    ),
+                    "metered_cost_usd": (
+                        round(sum(float(x.usage.total_cost_usd or 0.0) for x in arm_trs), 4)
+                        if arm_task_costs_known
+                        else None
+                    ),
+                    "mean_relay_cost_usd": (
+                        round(statistics.mean(task_relay_vals), 4)
+                        if task_relay_vals
+                        else None
+                    ),
+                    "relay_cost_usd": (
+                        round(sum(task_relay_vals), 4)
+                        if task_relay_vals
                         else None
                     ),
                     "mean_tokens": (
@@ -529,6 +613,20 @@ class ArenaDatabase:
         if exp_is_simulated and "SIMULATED" not in disp_title.upper():
             disp_title = f"[SIMULATED] {disp_title}"
 
+        computed_cum_cost = round(
+            sum(
+                max(float(t.usage.total_cost_usd or 0.0), float(t.usage.relay_cost_usd or 0.0))
+                for t in trials
+            ),
+            4,
+        )
+        raw_budget = exp_row["budget_usd"] if "budget_usd" in exp_keys else None
+        raw_cum = exp_row["cumulative_cost_usd"] if "cumulative_cost_usd" in exp_keys else None
+        budget_stopped = bool(exp_row["budget_stopped"]) if "budget_stopped" in exp_keys else False
+        raw_planned = exp_row["planned_trials"] if "planned_trials" in exp_keys else None
+        raw_completed = exp_row["completed_trials"] if "completed_trials" in exp_keys else None
+        inferred_planned = max(len(trials), len(contenders) * max(1, len(tasks_order)) * k_reps)
+
         return {
             "experiment_id": exp_row["experiment_id"],
             "title": disp_title,
@@ -536,8 +634,16 @@ class ArenaDatabase:
             "k_reps": k_reps,
             "created_at": exp_row["created_at"],
             "is_simulated": exp_is_simulated,
+            "budget_usd": round(float(raw_budget), 4) if raw_budget is not None else None,
+            "cumulative_cost_usd": round(float(raw_cum), 4) if raw_cum is not None else computed_cum_cost,
+            "budget_stopped": budget_stopped,
+            "budget_halted": budget_stopped,
+            "planned_trials": int(raw_planned) if raw_planned is not None else inferred_planned,
+            "completed_trials": int(raw_completed) if raw_completed is not None else len(trials),
             "contenders": [c.to_dict() for c in contenders],
             "leaderboard": [row.to_dict() for row in leaderboard],
+            "arms": [row.to_dict() for row in leaderboard],
+            "trials": [tr.to_dict() for tr in trials],
             "statistical_comparison": stat_comp,
             "task_matrix": task_matrix,
         }
