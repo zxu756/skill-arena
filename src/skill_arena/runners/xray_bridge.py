@@ -15,7 +15,7 @@ import urllib.parse
 
 from skill_arena.models import TokenUsageLedger
 
-PINNED_AGENT_XRAY_COMMIT = "4bdbd92dc509d66c7427d0cde50ae0a5870652f6"
+PINNED_AGENT_XRAY_COMMIT = "7856d178c4b8ffea5dff52309497739d140ff7f1"
 
 
 def get_agent_xray_commit(target: ModuleType | Path | None = None) -> str | None:
@@ -66,7 +66,7 @@ def get_agent_xray_commit(target: ModuleType | Path | None = None) -> str | None
             return None
         sha = sha_proc.stdout.strip()
         return sha or None
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
@@ -74,7 +74,14 @@ def _verify_agent_xray_pin(mod: ModuleType, *, verify_pin: bool) -> ModuleType:
     if not verify_pin:
         return mod
     actual_sha = get_agent_xray_commit(mod)
-    if actual_sha is not None and actual_sha != PINNED_AGENT_XRAY_COMMIT:
+    if actual_sha is None:
+        print(
+            "[WARNING] agent-xray commit unverified / agent-xray 提交号没核对 "
+            f"(expected PINNED_AGENT_XRAY_COMMIT={PINNED_AGENT_XRAY_COMMIT}; git commit SHA unavailable).",
+            file=sys.stderr,
+        )
+        return mod
+    if actual_sha != PINNED_AGENT_XRAY_COMMIT:
         raise RuntimeError(
             f"Loaded agent-xray git checkout is at {actual_sha}, expected "
             f"PINNED_AGENT_XRAY_COMMIT={PINNED_AGENT_XRAY_COMMIT}."
@@ -131,7 +138,8 @@ def _load_agent_xray(
     verify_pin: bool = True,
 ) -> ModuleType:
     """Import `agent_xray` without hardcoded user paths across direct, sibling, and local-clone setups."""
-    if repo_root is None:
+    env_src = os.environ.get("AGENT_XRAY_SRC", "").strip()
+    if repo_root is None and not env_src:
         try:
             mod = importlib.import_module("agent_xray")
             if hasattr(mod, "start_background_proxy"):
@@ -142,7 +150,6 @@ def _load_agent_xray(
     effective_root = (repo_root or Path(__file__).resolve().parents[3]).resolve()
     candidates: list[Path] = []
 
-    env_src = os.environ.get("AGENT_XRAY_SRC", "").strip()
     if env_src:
         candidates.append(Path(env_src).expanduser().resolve())
 
@@ -153,8 +160,14 @@ def _load_agent_xray(
         init_file = src_dir / "agent_xray" / "__init__.py"
         if init_file.is_file():
             src_str = str(src_dir)
-            if src_str not in sys.path:
-                sys.path.insert(0, src_str)
+            if src_str in sys.path:
+                sys.path.remove(src_str)
+            sys.path.insert(0, src_str)
+            existing = sys.modules.get("agent_xray")
+            existing_file = getattr(existing, "__file__", None) if existing is not None else None
+            if existing_file is not None and not Path(existing_file).resolve().is_relative_to(src_dir.resolve()):
+                for mod_name in [k for k in sys.modules if k == "agent_xray" or k.startswith("agent_xray.")]:
+                    sys.modules.pop(mod_name, None)
             mod = importlib.import_module("agent_xray")
             if hasattr(mod, "start_background_proxy"):
                 return _verify_agent_xray_pin(mod, verify_pin=verify_pin)
@@ -204,6 +217,8 @@ class XRayMeteringBridge:
             or "https://api.openai.com"
         )
         self._running: Any | None = None
+        self.agent_xray_commit: str | None = None
+        self.agent_xray_pin_status: str = "unverified"
 
     @property
     def base_url(self) -> str:
@@ -225,6 +240,10 @@ class XRayMeteringBridge:
 
     def start(self) -> str:
         xray = _load_agent_xray()
+        self.agent_xray_commit = get_agent_xray_commit(xray)
+        self.agent_xray_pin_status = (
+            "verified" if self.agent_xray_commit == PINNED_AGENT_XRAY_COMMIT else "unverified"
+        )
         self._running = xray.start_background_proxy(
             host="127.0.0.1",
             port=0,

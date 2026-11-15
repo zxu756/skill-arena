@@ -66,6 +66,7 @@ class ContenderConfig:
     isolate_home: bool = True
     auth_copy_mode: bool = False
     allow_unisolated_host_home: bool = False
+    pass_env: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,6 +86,7 @@ class ContenderConfig:
             isolate_home=bool(payload.get("isolate_home", True)),
             auth_copy_mode=bool(payload.get("auth_copy_mode", False)),
             allow_unisolated_host_home=bool(payload.get("allow_unisolated_host_home", False)),
+            pass_env=list(payload.get("pass_env", [])),
         )
 
 

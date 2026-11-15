@@ -24,6 +24,7 @@ from skill_arena.models import ContenderConfig, TaskSpec
 from skill_arena.runners.harness_driver import (
     SUPPORTED_RELAY_CLIS,
     HarnessDriver,
+    normalize_pass_env_names,
     validate_simulation_inputs,
 )
 from skill_arena.sandbox.worktree_pool import WorktreeSandboxPool
@@ -31,6 +32,8 @@ from skill_arena.store.arena_db import ArenaDatabase
 from skill_arena.studio.server import create_studio_server
 from skill_arena.studio.templates import render_arena_html
 from skill_arena.suites.builtin_tasks import load_builtin_suite
+
+EXIT_BUDGET_EXCEEDED = 3
 
 
 def _load_tasks(suite_arg: str) -> list[TaskSpec]:
@@ -63,6 +66,7 @@ def run_ab_experiment(
     auth_copy_mode: bool = False,
     relay_script: str | Path | None = None,
     budget_usd: float | None = None,
+    pass_env: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
     verify_suite_runners_available(tasks)
@@ -94,6 +98,7 @@ def run_ab_experiment(
         auth_copy_mode=auth_copy_mode,
         relay_script=relay_script,
         budget_usd=budget_usd,
+        pass_env=pass_env,
     )
     try:
         stop_loop = False
@@ -108,17 +113,27 @@ def run_ab_experiment(
                     if not can_start:
                         stop_loop = True
                         if not quiet:
+                            ceil_val = float(budget_usd or 0.0)
+                            overran = driver.cumulative_cost_usd > ceil_val + 1e-9
                             if is_zh:
+                                reason_zh = (
+                                    f"已超出总预算上限，在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止。"
+                                    if overran
+                                    else f"在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止以避免超出预算。"
+                                )
                                 print(
-                                    f"[预算上限停止] 实验总预算上限 ${float(budget_usd or 0.0):.4f}，"
-                                    f"当前累计花费 ${driver.cumulative_cost_usd:.4f}，"
-                                    f"在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止以避免超出预算。"
+                                    f"[预算上限停止] 实验总预算上限 ${ceil_val:.4f}，"
+                                    f"当前累计花费 ${driver.cumulative_cost_usd:.4f}，{reason_zh}"
                                 )
                             else:
+                                reason_en = (
+                                    f"budget already exceeded; halting before trial {driver.completed_trials + 1}/{planned_trials}."
+                                    if overran
+                                    else f"halting before trial {driver.completed_trials + 1}/{planned_trials} to avoid exceeding budget."
+                                )
                                 print(
-                                    f"[BUDGET STOPPED] Experiment budget ceiling ${float(budget_usd or 0.0):.4f} "
-                                    f"(cumulative spend ${driver.cumulative_cost_usd:.4f}): "
-                                    f"halting before trial {driver.completed_trials + 1}/{planned_trials} to avoid exceeding budget."
+                                    f"[BUDGET STOPPED] Experiment budget ceiling ${ceil_val:.4f} "
+                                    f"(cumulative spend ${driver.cumulative_cost_usd:.4f}): {reason_en}"
                                 )
                         break
 
@@ -149,6 +164,8 @@ def run_ab_experiment(
                                 f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (rep {rep}/{k_reps}) "
                                 f"| {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
                             )
+        if budget_usd is not None and driver.cumulative_cost_usd > float(budget_usd) + 1e-9:
+            driver.budget_stopped = True
     finally:
         db.update_experiment_budget_state(
             exp_id,
@@ -175,9 +192,11 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
         if is_sim:
             print("\n[SIMULATED / 模拟数据] 提示：以下数字由内置合成模拟器生成，不代表任何真实模型或技能的表现。")
         if budget_stopped and budget_val is not None:
+            overran = cum_cost_val > float(budget_val) + 1e-9
+            suffix_zh = "单试次超支后立即停止" if overran else "在超出预算前停止"
             print(
                 f"\n[预算上限停止] 实验总预算上限 ${float(budget_val):.4f}，累计花费 ${cum_cost_val:.4f}，"
-                f"已完成 {completed_n}/{planned_n} 次试验（在超出预算前停止）。"
+                f"已完成 {completed_n}/{planned_n} 次试验（{suffix_zh}）。"
             )
         elif budget_val is not None:
             print(
@@ -261,10 +280,16 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
     if is_sim:
         print("\n[SIMULATED] Notice: Synthetic calibration numbers only - does not reflect any real model or skill.")
     if budget_stopped and budget_val is not None:
-        print(
-            f"\n[BUDGET STOPPED] Budget ceiling ${float(budget_val):.4f} reached before next trial: "
-            f"cumulative spend ${cum_cost_val:.4f}, completed {completed_n}/{planned_n} planned trials."
-        )
+        if cum_cost_val > float(budget_val) + 1e-9:
+            print(
+                f"\n[BUDGET STOPPED] Budget ceiling ${float(budget_val):.4f} exceeded "
+                f"(cumulative spend ${cum_cost_val:.4f}): halted after {completed_n}/{planned_n} planned trials."
+            )
+        else:
+            print(
+                f"\n[BUDGET STOPPED] Budget ceiling ${float(budget_val):.4f} reached before next trial: "
+                f"cumulative spend ${cum_cost_val:.4f}, completed {completed_n}/{planned_n} planned trials."
+            )
     elif budget_val is not None:
         print(
             f"\nBudget ceiling: ${float(budget_val):.4f} | cumulative spend ${cum_cost_val:.4f} | "
@@ -397,7 +422,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--copy-auth",
         action="store_true",
-        help="Read-only copy minimal credential files into the per-trial isolated HOME.",
+        help="Read-only copy minimal credential files into the per-trial isolated HOME (default: False).",
+    )
+    p_run.add_argument(
+        "--pass-env",
+        action="append",
+        default=[],
+        metavar="VAR",
+        help=(
+            "Explicitly forward named host environment variable(s) (e.g. OPENAI_API_KEY) into trial subprocesses; "
+            "repeatable or comma-separated (default: zero provider API key variables forwarded)."
+        ),
     )
     p_run.add_argument(
         "--host-home",
@@ -539,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
             treat_label = f"{raw_cli} ({eff_model} {skill_label})"
 
         try:
+            validated_pass_env = list(normalize_pass_env_names(args.pass_env))
             tasks = _load_tasks(args.suite)
             verify_suite_runners_available(tasks)
             db = ArenaDatabase(args.db)
@@ -554,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
                     isolate_home=isolate_home,
                     auth_copy_mode=bool(args.copy_auth),
                     allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                    pass_env=validated_pass_env,
                 ),
                 ContenderConfig(
                     contender_id="arm_treatment",
@@ -566,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
                     isolate_home=isolate_home,
                     auth_copy_mode=bool(args.copy_auth),
                     allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                    pass_env=validated_pass_env,
                 ),
             ]
             exp_id = run_ab_experiment(
@@ -581,6 +619,7 @@ def main(argv: list[str] | None = None) -> int:
                 auth_copy_mode=bool(args.copy_auth),
                 relay_script=args.relay_script,
                 budget_usd=args.budget_usd,
+                pass_env=validated_pass_env,
             )
         except (ValueError, PermissionError, RuntimeError) as exc:
             print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
@@ -596,6 +635,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\n已导出单文件 HTML 评测报告 -> {out_path}")
             else:
                 print(f"\nExported HTML report -> {out_path}")
+        if bool(report.get("budget_stopped")):
+            return EXIT_BUDGET_EXCEEDED
         return 0
 
     if args.command == "compare":

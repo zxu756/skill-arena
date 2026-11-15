@@ -100,14 +100,6 @@ _ALLOWED_SYSTEM_ENV_KEYS: tuple[str, ...] = (
     "VIRTUAL_ENV",
 )
 
-_ALLOWED_PROVIDER_API_ENV_KEYS: tuple[str, ...] = (
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "MISTRAL_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-)
-
 _ALLOWED_RELAY_ENV_KEYS: tuple[str, ...] = (
     "RELAY_CODEX_BIN",
     "RELAY_CLAUDE_BIN",
@@ -130,14 +122,73 @@ _FORBIDDEN_CHILD_ENV_KEYS: tuple[str, ...] = (
     "CLAUDECODE",
 )
 
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DISALLOWED_PASS_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
+        "VIBE_HOME",
+        "SSH_AUTH_SOCK",
+        "SSH_AGENT_PID",
+        "CLAUDECODE",
+        "RELAY_WORKER",
+    }
+)
+
+
+def normalize_pass_env_names(
+    raw_items: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Validate and deduplicate explicit `--pass-env` variable names (no wildcards, `=`, or sandbox overrides)."""
+    if not raw_items:
+        return ()
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        parts = str(raw).split(",")
+        for part in parts:
+            name = part.strip()
+            if not name or not _ENV_VAR_NAME_RE.match(name):
+                raise ValueError(
+                    f"Invalid `--pass-env` variable name {part!r}: pass exact environment variable identifiers "
+                    "(e.g. `--pass-env OPENAI_API_KEY`), without `=` values or wildcards. "
+                    f"/ 无效的 `--pass-env` 变量名 {part!r}：请填写精确的环境变量名（不支持 `=` 赋值或通配符）。"
+                )
+            if (
+                name in _DISALLOWED_PASS_ENV_KEYS
+                or name.startswith("CLAUDE_CODE_")
+                or name.startswith("SKILL_ARENA_")
+            ):
+                raise ValueError(
+                    f"`--pass-env` refuses sandbox/session-protected variable {name!r}. "
+                    f"/ `--pass-env` 拒绝透传沙盒或会话受保护变量 {name!r}。"
+                )
+            if name not in seen:
+                seen.add(name)
+                cleaned.append(name)
+    return tuple(cleaned)
+
 
 def _build_allowlisted_trial_env(
     mount_env: dict[str, str],
     trial_tmp: Path,
+    pass_env: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, str]:
-    """Build child agent environment strictly from an explicit allowlist and per-trial paths."""
+    """Build child agent environment strictly from system allowlist, explicit `pass_env`, and per-trial paths."""
     allowed: dict[str, str] = {}
-    for key in (*_ALLOWED_SYSTEM_ENV_KEYS, *_ALLOWED_PROVIDER_API_ENV_KEYS, *_ALLOWED_RELAY_ENV_KEYS):
+    for key in (*_ALLOWED_SYSTEM_ENV_KEYS, *_ALLOWED_RELAY_ENV_KEYS):
+        val = os.environ.get(key)
+        if val is not None:
+            allowed[key] = val
+    for key in normalize_pass_env_names(pass_env):
         val = os.environ.get(key)
         if val is not None:
             allowed[key] = val
@@ -348,6 +399,7 @@ class HarnessDriver:
         auth_copy_mode: bool = False,
         relay_script: str | Path | None = None,
         budget_usd: float | None = None,
+        pass_env: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self.pool = pool
         self.upstream_api_url = upstream_api_url
@@ -356,6 +408,7 @@ class HarnessDriver:
         self.auth_copy_mode = auth_copy_mode
         self.relay_script = relay_script
         self.budget_usd = budget_usd
+        self.pass_env: tuple[str, ...] = normalize_pass_env_names(pass_env)
         self.cumulative_cost_usd: float = 0.0
         self.max_observed_trial_cost: float = 0.0
         self.completed_trials: int = 0
@@ -529,7 +582,12 @@ class HarnessDriver:
         proxy.start()
         t0 = time.perf_counter()
         try:
-            base_env = _build_allowlisted_trial_env(mount_report.isolated_env_vars, trial_tmp=trial_tmp)
+            combined_pass_env = normalize_pass_env_names((*self.pass_env, *contender.pass_env))
+            base_env = _build_allowlisted_trial_env(
+                mount_report.isolated_env_vars,
+                trial_tmp=trial_tmp,
+                pass_env=combined_pass_env,
+            )
             env = proxy.agent_env(base_env)
             _inject_host_vendor_bin_if_needed(base_cli, env)
             env["RELAY_TIMEOUT"] = str(max(1, int(task.timeout_sec)))

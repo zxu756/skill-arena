@@ -365,9 +365,9 @@ def test_kr4_strict_child_env_allowlist_blocks_ssh_claude_code_and_host_secrets(
     assert "AWS_SECRET_ACCESS_KEY" not in child_env
     assert "GITHUB_TOKEN" not in child_env
     assert "RANDOM_HOST_SECRET" not in child_env
+    assert "ANTHROPIC_API_KEY" not in child_env
 
-    # Allowed provider key and isolated paths ARE present
-    assert child_env.get("ANTHROPIC_API_KEY") == "sk-ant-allowed-key"
+    # Isolated paths ARE present while un-named provider API keys are NOT forwarded
     assert dumped["home_exists_during_trial"] is True
     assert dumped["tmpdir_exists_during_trial"] is True
     assert Path(child_env["HOME"]).resolve() != fake_host_home.resolve()
@@ -487,6 +487,177 @@ def test_kr4_readmes_disclose_host_env_only_isolation_boundary_bilingually() -> 
     assert "环境变量" in readme_zh
     assert "worktree" in readme_zh or "工作区以外" in readme_zh
     assert "AgentVM" in readme_zh
+
+
+def test_kr6_zero_api_keys_forwarded_by_default_and_pass_env_forwards_only_named_vars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KR6: Default forwards ZERO provider API keys; --pass-env forwards ONLY explicitly named host vars."""
+    from skill_arena.cli import main
+    from skill_arena.runners.harness_driver import _build_allowlisted_trial_env
+
+    api_vars = {
+        "ANTHROPIC_API_KEY": "fake-ant-key",
+        "OPENAI_API_KEY": "fake-oai-key",
+        "MISTRAL_API_KEY": "fake-mis-key",
+        "GOOGLE_API_KEY": "fake-goo-key",
+        "GEMINI_API_KEY": "fake-gem-key",
+        "CUSTOM_VENDOR_API_KEY": "fake-custom-key",
+        "GITHUB_TOKEN": "fake-gh-token",
+        "GH_TOKEN": "fake-gh-cli-token",
+        "NPM_TOKEN": "fake-npm-token",
+        "ANTHROPIC_AUTH_TOKEN": "fake-ant-auth-token",
+    }
+    for k, v in api_vars.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("MISSING_NAMED_API_KEY", raising=False)
+
+    # 1. Direct unit check on _build_allowlisted_trial_env default (no pass_env)
+    unit_default_env = _build_allowlisted_trial_env({"HOME": str(tmp_path / "h")}, tmp_path / "t")
+    leaked_unit = [
+        k for k in unit_default_env if k in api_vars or k.endswith("_API_KEY") or k.endswith("_TOKEN")
+    ]
+    assert leaked_unit == [], f"Default _build_allowlisted_trial_env leaked API keys/tokens: {leaked_unit}"
+
+    # 2. End-to-end CLI check: default run (no --pass-env) forwards ZERO API key or token vars to agent subprocess
+    fake_host_home = tmp_path / "host_home"
+    fake_host_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_host_home))
+
+    obs_dir = tmp_path / "kr6_obs"
+    obs_dir.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _make_stub_cli(
+        bin_dir,
+        "claude",
+        (
+            "import json, os, sys, uuid\n"
+            "from pathlib import Path\n"
+            "_ = sys.stdin.read()\n"
+            "env_map = dict(os.environ)\n"
+            f"(Path({str(obs_dir)!r}) / f'env_{{uuid.uuid4().hex[:8]}}.json').write_text(json.dumps(env_map), encoding='utf-8')\n"
+            "print(json.dumps({'result': 'Checked env.\\nSTATUS: success', 'total_cost_usd': 0.001}))\n"
+        ),
+    )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    suite_file = tmp_path / "one_task.json"
+    suite_file.write_text(json.dumps([load_builtin_suite()[0].to_dict()]), encoding="utf-8")
+
+    rc_default = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(suite_file),
+            "--reps",
+            "1",
+            "--db",
+            str(tmp_path / "default.sqlite"),
+        ]
+    )
+    capsys.readouterr()
+    assert rc_default == 0
+    default_dumps = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(obs_dir.glob("*.json"))]
+    assert len(default_dumps) == 2
+    for d in default_dumps:
+        # SKILL_ARENA_TRIAL_TOKEN is SkillArena's own per-trial UUID marker for K13/K16 daemon reaping.
+        present_keys = [
+            k
+            for k in d
+            if k != "SKILL_ARENA_TRIAL_TOKEN"
+            and (k in api_vars or k.endswith("_API_KEY") or k.endswith("_TOKEN"))
+        ]
+        assert present_keys == [], f"CLI default run forwarded un-named API keys/tokens: {present_keys}"
+
+    # 3. Explicit --pass-env (repeatable + comma-separated + missing host var) forwards ONLY named present vars
+    for p in obs_dir.glob("*.json"):
+        p.unlink()
+
+    rc_named = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(suite_file),
+            "--reps",
+            "1",
+            "--pass-env",
+            "OPENAI_API_KEY",
+            "--pass-env",
+            "MISTRAL_API_KEY,MISSING_NAMED_API_KEY",
+            "--db",
+            str(tmp_path / "named.sqlite"),
+        ]
+    )
+    capsys.readouterr()
+    assert rc_named == 0
+    named_dumps = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(obs_dir.glob("*.json"))]
+    assert len(named_dumps) == 2
+    for d in named_dumps:
+        assert d.get("OPENAI_API_KEY") == "fake-oai-key"
+        assert d.get("MISTRAL_API_KEY") == "fake-mis-key"
+        assert "MISSING_NAMED_API_KEY" not in d
+        assert "ANTHROPIC_API_KEY" not in d
+        assert "GOOGLE_API_KEY" not in d
+        assert "GEMINI_API_KEY" not in d
+        assert "CUSTOM_VENDOR_API_KEY" not in d
+        assert "GITHUB_TOKEN" not in d
+
+    # 4. Invalid or wildcard/assignment/forbidden --pass-env values fail cleanly with exit code 2
+    for bad_arg in ("", "*_API_KEY", "OPENAI_API_KEY=foo", "SSH_AUTH_SOCK", "CLAUDE_CODE_SESSION_ID", "HOME"):
+        rc_bad = main(
+            [
+                "--lang",
+                "en",
+                "run",
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--suite",
+                str(suite_file),
+                "--reps",
+                "1",
+                "--pass-env",
+                bad_arg,
+                "--db",
+                str(tmp_path / "bad.sqlite"),
+            ]
+        )
+        capsys.readouterr()
+        assert rc_bad == 2, f"Expected exit code 2 for invalid --pass-env {bad_arg!r}, got {rc_bad}"
+
+
+def test_kr6_readmes_accurately_describe_zero_default_api_keys_and_copy_auth() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    # Old misleading phrasing must be removed
+    assert "and host credentials unless `--copy-auth` is passed" not in readme_en
+
+    # Both READMEs must disclose --pass-env for API key env vars AND --copy-auth for CLI auth files
+    assert "--pass-env" in readme_en
+    assert "--copy-auth" in readme_en
+    assert "OPENAI_API_KEY" in readme_en or "API key" in readme_en
+
+    assert "--pass-env" in readme_zh
+    assert "--copy-auth" in readme_zh
+    assert "API key" in readme_zh or "密钥" in readme_zh
 
 
 def test_relay_sh_integration_parses_log_md_strips_relay_worker_and_cleans_workspace(

@@ -358,11 +358,22 @@ def test_zero_turns_proxy_summarize_reports_unmetered() -> None:
 def test_pinned_agent_xray_commit_matches_loaded_repo(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert PINNED_AGENT_XRAY_COMMIT == "4bdbd92dc509d66c7427d0cde50ae0a5870652f6"
+    import tomllib
+
+    expected_sha = "7856d178c4b8ffea5dff52309497739d140ff7f1"
+    assert PINNED_AGENT_XRAY_COMMIT == expected_sha
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pyproject_data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject_data["tool"]["skill_arena"]["pinned_agent_xray_commit"] == expected_sha
+
     xray_mod = _load_agent_xray()
+    captured = capsys.readouterr()
     resolved_sha = get_agent_xray_commit(xray_mod)
-    assert resolved_sha == PINNED_AGENT_XRAY_COMMIT
+    assert resolved_sha == expected_sha
+    assert "没核对" not in captured.err and "unverified" not in captured.err
 
     # Also verify a mismatched git checkout fails pin verification unless overridden with verify_pin=False
     fake_xray_repo = tmp_path / "agent-xray"
@@ -387,7 +398,7 @@ def test_pinned_agent_xray_commit_matches_loaded_repo(
     for k in list(saved_modules):
         sys.modules.pop(k, None)
     try:
-        with pytest.raises(RuntimeError, match="PINNED_AGENT_XRAY_COMMIT|4bdbd92"):
+        with pytest.raises(RuntimeError, match="PINNED_AGENT_XRAY_COMMIT|7856d178"):
             _load_agent_xray(repo_root=fake_arena_repo, verify_pin=True)
         for k in list(sys.modules):
             if k == "agent_xray" or k.startswith("agent_xray."):
@@ -399,4 +410,71 @@ def test_pinned_agent_xray_commit_matches_loaded_repo(
             if k == "agent_xray" or k.startswith("agent_xray."):
                 sys.modules.pop(k, None)
         sys.modules.update(saved_modules)
+
+
+def test_kr8_unresolvable_agent_xray_commit_emits_unverified_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KR8: When agent-xray git SHA cannot be resolved (non-git wheel/copy or failed git rev-parse), emit '没核对' / 'unverified'."""
+    wheel_site = tmp_path / "wheel_site"
+    pkg_dir = wheel_site / "agent_xray"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "__init__.py").write_text(
+        "class _DummyRunning:\n"
+        "    base_url = 'http://127.0.0.1:9'\n"
+        "    anthropic_base_url = 'http://127.0.0.1:9'\n"
+        "    openai_base_url = 'http://127.0.0.1:9'\n"
+        "    def stop(self): pass\n"
+        "    def get_turns(self, limit=500): return []\n"
+        "    def agent_env(self, base_env=None): return dict(base_env or {})\n"
+        "def start_background_proxy(**kwargs):\n"
+        "    return _DummyRunning()\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AGENT_XRAY_SRC", str(wheel_site))
+    cleaned_sys_path = [p for p in sys.path if "agent-xray" not in p and "agent_xray" not in p]
+    monkeypatch.setattr(sys, "path", cleaned_sys_path)
+    saved_modules = {k: v for k, v in sys.modules.items() if k == "agent_xray" or k.startswith("agent_xray.")}
+    for k in list(saved_modules):
+        sys.modules.pop(k, None)
+    try:
+        # 1. Non-git directory -> get_agent_xray_commit is None -> warning emitted instead of silent skip
+        capsys.readouterr()
+        mod = _load_agent_xray(repo_root=tmp_path / "isolated_arena", verify_pin=True)
+        err1 = capsys.readouterr().err
+        assert get_agent_xray_commit(mod) is None
+        assert "没核对" in err1
+        assert "unverified" in err1.lower()
+
+        # 2. Bridge start() also surfaces unverified status and emits warning
+        bridge = XRayMeteringBridge()
+        bridge.start()
+        try:
+            err2 = capsys.readouterr().err
+            assert "没核对" in err2
+            assert "unverified" in err2.lower()
+            assert bridge.agent_xray_commit is None
+            assert bridge.agent_xray_pin_status == "unverified"
+        finally:
+            bridge.stop()
+
+        # 3. Simulated `git rev-parse` failure (OSError) -> emits '没核对' / 'unverified'
+        monkeypatch.setattr(
+            "skill_arena.runners.xray_bridge.subprocess.run",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("git unavailable")),
+        )
+        capsys.readouterr()
+        _load_agent_xray(verify_pin=True)
+        err3 = capsys.readouterr().err
+        assert "没核对" in err3
+        assert "unverified" in err3.lower()
+    finally:
+        for k in list(sys.modules):
+            if k == "agent_xray" or k.startswith("agent_xray."):
+                sys.modules.pop(k, None)
+        sys.modules.update(saved_modules)
+
 

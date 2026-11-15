@@ -55,14 +55,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--copy-auth",
         dest="copy_auth",
         action="store_true",
-        default=True,
-        help="Copy minimal auth tokens into per-trial isolated HOME (default).",
+        default=False,
+        help="Explicitly copy minimal host CLI auth tokens into per-trial isolated HOME (default: False).",
     )
     parser.add_argument(
         "--no-copy-auth",
         dest="copy_auth",
         action="store_false",
-        help="Do not copy host auth tokens into isolated HOME (for local stub/API-key runs).",
+        help="Do not copy host auth tokens into isolated HOME (default).",
+    )
+    parser.add_argument(
+        "--pass-env",
+        action="append",
+        default=[],
+        metavar="VAR",
+        help="Explicitly forward named host environment variable(s) into trial subprocesses (repeatable or comma-separated).",
     )
     parser.add_argument(
         "--upstream-url",
@@ -128,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if args.copy_auth:
             cli_argv.append("--copy-auth")
+        for env_spec in args.pass_env:
+            cli_argv.extend(["--pass-env", env_spec])
 
         rc = cli_main(cli_argv)
         if rc != 0:

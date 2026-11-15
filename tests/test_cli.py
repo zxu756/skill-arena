@@ -637,6 +637,10 @@ def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
     db_015 = tmp_path / "budget_015.sqlite"
     html_015_en = tmp_path / "budget_015_en.html"
     html_015_zh = tmp_path / "budget_015_zh.html"
+    from skill_arena.cli import EXIT_BUDGET_EXCEEDED
+
+    assert EXIT_BUDGET_EXCEEDED == 3
+
     rc1 = main(
         [
             "--lang",
@@ -659,7 +663,7 @@ def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
         ]
     )
     out1_en = capsys.readouterr().out
-    assert rc1 == 0
+    assert rc1 == EXIT_BUDGET_EXCEEDED
     seen_1 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(seen_1) == 1, f"Expected to halt after 1 trial before exceeding $0.015, ran {len(seen_1)}"
     assert float(seen_1[0]["relay_budget_usd"]) == pytest.approx(0.015)
@@ -709,7 +713,7 @@ def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
                 str(db_025),
             ]
         )
-        == 0
+        == EXIT_BUDGET_EXCEEDED
     )
     capsys.readouterr()
     seen_2 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -744,13 +748,15 @@ def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
                 str(db_005),
             ]
         )
-        == 0
+        == EXIT_BUDGET_EXCEEDED
     )
-    capsys.readouterr()
+    out3_en = capsys.readouterr().out
+    assert "[BUDGET STOPPED]" in out3_en
     seen_3 = [json.loads(ln) for ln in seen_budgets_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(seen_3) == 1
     rep3 = ArenaDatabase(db_005).build_comparison_report(ArenaDatabase(db_005).latest_experiment_id() or "")
     assert rep3["completed_trials"] == 1
+    assert rep3["cumulative_cost_usd"] == pytest.approx(0.01)
     assert rep3["budget_stopped"] is True
 
     # Case 4: Bilingual README parity check for experiment-wide cumulative ceiling
@@ -759,6 +765,160 @@ def test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget(
     readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
     assert "cumulative" in readme_en.lower() and "--budget-usd" in readme_en
     assert "累计" in readme_zh and "--budget-usd" in readme_zh
+
+
+def test_kr8_budget_halt_returns_dedicated_exit_code_and_discloses_first_trial_overrun(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KR8: Budget halt returns EXIT_BUDGET_EXCEEDED (3) vs 0 when within budget; READMEs disclose exit 3 & trial-1 overrun."""
+    from skill_arena.cli import EXIT_BUDGET_EXCEEDED
+
+    assert EXIT_BUDGET_EXCEEDED == 3
+
+    fake_home = tmp_path / "caller_home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _write_executable(
+        bin_dir / "claude",
+        (
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            "_ = sys.stdin.read()\n"
+            "print(json.dumps({'result': 'Attempt.\\nSTATUS: success', 'total_cost_usd': 0.01}))\n"
+        ),
+    )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    task_file = tmp_path / "kr8_budget_task.json"
+    task_file.write_text(json.dumps([load_builtin_suite()[0].to_dict()]), encoding="utf-8")
+
+    # 1. Within budget (2 planned trials x $0.01 = $0.02 <= $0.05) -> exits 0, budget_stopped=False
+    db_within = tmp_path / "within.sqlite"
+    rc_within = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(task_file),
+            "--reps",
+            "1",
+            "--budget-usd",
+            "0.05",
+            "--db",
+            str(db_within),
+        ]
+    )
+    capsys.readouterr()
+    assert rc_within == 0
+    rep_within = ArenaDatabase(db_within).build_comparison_report(
+        ArenaDatabase(db_within).latest_experiment_id() or ""
+    )
+    assert rep_within["completed_trials"] == 2
+    assert rep_within["budget_stopped"] is False
+
+    # 2. Halted before next trial (2 planned trials x $0.01, --budget-usd 0.015) -> exits 3 (not 0, 1, or 2)
+    db_halt = tmp_path / "halt.sqlite"
+    rc_halt = main(
+        [
+            "--lang",
+            "zh",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(task_file),
+            "--reps",
+            "1",
+            "--budget-usd",
+            "0.015",
+            "--db",
+            str(db_halt),
+        ]
+    )
+    out_halt_zh = capsys.readouterr().out
+    assert rc_halt == EXIT_BUDGET_EXCEEDED == 3
+    assert "[预算上限停止]" in out_halt_zh
+
+    # 3. Single-trial overrun (2 planned trials x $0.01, --budget-usd 0.005 < $0.01) -> trial 1 runs, overruns, halts, exits 3
+    db_overrun = tmp_path / "overrun.sqlite"
+    rc_overrun = main(
+        [
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "claude",
+            "--model",
+            "claude-sonnet-4-5",
+            "--suite",
+            str(task_file),
+            "--reps",
+            "1",
+            "--budget-usd",
+            "0.005",
+            "--db",
+            str(db_overrun),
+        ]
+    )
+    out_overrun = capsys.readouterr().out
+    assert rc_overrun == EXIT_BUDGET_EXCEEDED == 3
+    assert "[BUDGET STOPPED]" in out_overrun
+    rep_overrun = ArenaDatabase(db_overrun).build_comparison_report(
+        ArenaDatabase(db_overrun).latest_experiment_id() or ""
+    )
+    assert rep_overrun["completed_trials"] == 1
+    assert rep_overrun["cumulative_cost_usd"] == pytest.approx(0.01)
+    assert rep_overrun["budget_stopped"] is True
+
+    # 4. Subprocess CLI check confirming actual process exit status is 3
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skill_arena.cli",
+            "--lang",
+            "en",
+            "run",
+            "--cli",
+            "simulate",
+            "--suite",
+            "concurrency",
+            "--reps",
+            "1",
+            "--budget-usd",
+            "0.0001",
+            "--db",
+            str(tmp_path / "subproc_overrun.sqlite"),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 3, f"Expected exit code 3, got {proc.returncode}: {proc.stdout}\n{proc.stderr}"
+
+    # 5. Bilingual README disclosure check for exit code 3 and first-trial overrun
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "EXIT_BUDGET_EXCEEDED" in readme_en and "3" in readme_en
+    assert "smaller than the cost of a single trial" in readme_en
+    assert "first trial still executes" in readme_en
+    assert "EXIT_BUDGET_EXCEEDED" in readme_zh and "3" in readme_zh
+    assert "小于单次试验" in readme_zh
+    assert "第 1 次试验仍会先执行" in readme_zh or "第 `1` 次试验仍会先执行" in readme_zh
 
 
 def test_kr3_cli_json_and_html_display_both_xray_and_relay_costs(
@@ -1016,7 +1176,6 @@ def test_kr5_real_ab_gate_script_executes_offline_against_local_stub_and_fake_up
                 "1",
                 "--budget-usd",
                 "0.50",
-                "--no-copy-auth",
                 "--upstream-url",
                 upstream_url,
                 "--db",
@@ -1036,6 +1195,243 @@ def test_kr5_real_ab_gate_script_executes_offline_against_local_stub_and_fake_up
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_kr7_real_ab_gate_defaults_copy_auth_false_and_threads_pass_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KR7 + KR6: real-ab-gate.py defaults copy_auth to False and threads --pass-env cleanly."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import importlib.util
+    import threading
+
+    repo_root = Path(__file__).resolve().parents[1]
+    gate_script = repo_root / "Scripts" / "acceptance" / "real-ab-gate.py"
+    spec = importlib.util.spec_from_file_location("real_ab_gate", gate_script)
+    assert spec is not None and spec.loader is not None
+    gate_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate_mod)
+
+    monkeypatch.delenv("SKILL_ARENA_REAL_COPY_AUTH", raising=False)
+    default_args = gate_mod._parse_args([])
+    assert default_args.copy_auth is False, (
+        f"real-ab-gate.py must default copy_auth to False (matching skill-arena CLI), got {default_args.copy_auth!r}"
+    )
+    assert default_args.pass_env == []
+    assert gate_mod._parse_args(["--copy-auth"]).copy_auth is True
+    assert gate_mod._parse_args(["--no-copy-auth"]).copy_auth is False
+    parsed_env = gate_mod._parse_args(["--pass-env", "OPENAI_API_KEY", "--pass-env", "MISTRAL_API_KEY"])
+    assert parsed_env.pass_env == ["OPENAI_API_KEY", "MISTRAL_API_KEY"]
+
+    help_proc = subprocess.run(
+        [sys.executable, str(gate_script), "--help"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "(default)" not in next(
+        (ln for ln in help_proc.stdout.splitlines() if "--copy-auth" in ln), ""
+    )
+
+    class _FakeAnthropicJSON(BaseHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            n = int(self.headers.get("Content-Length", "0"))
+            _ = self.rfile.read(n)
+            body = json.dumps(
+                {
+                    "id": "msg_kr7",
+                    "type": "message",
+                    "model": "claude-sonnet-4-5",
+                    "usage": {
+                        "input_tokens": 200,
+                        "cache_read_input_tokens": 50,
+                        "cache_creation_input_tokens": 0,
+                        "output_tokens": 30,
+                    },
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _FakeAnthropicJSON)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    upstream_url = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    try:
+        t0 = load_builtin_suite()[0]
+        ref_code = t0.reference_solution_files["rate_limiter.py"]
+        suite_path = tmp_path / "kr7_one_task.json"
+        suite_path.write_text(json.dumps([t0.to_dict()]), encoding="utf-8")
+
+        skill_dir = tmp_path / "kr7-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# KR7 Skill\n", encoding="utf-8")
+
+        caller_home = tmp_path / "caller_home_with_creds"
+        (caller_home / ".claude").mkdir(parents=True)
+        (caller_home / ".claude" / ".credentials.json").write_text('{"secret":"host-cred"}', encoding="utf-8")
+
+        obs_dir = tmp_path / "kr7_obs"
+        obs_dir.mkdir()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_claude = _write_executable(
+            bin_dir / "claude",
+            (
+                f"#!{sys.executable}\n"
+                "import json, os, sys, urllib.request, uuid\n"
+                "from pathlib import Path\n"
+                "_ = sys.stdin.read()\n"
+                "home = Path(os.environ['HOME'])\n"
+                "rec = {\n"
+                "    'cred_copied': (home / '.claude' / '.credentials.json').exists(),\n"
+                "    'openai_key': os.environ.get('OPENAI_API_KEY'),\n"
+                "    'anthropic_key': os.environ.get('ANTHROPIC_API_KEY'),\n"
+                "}\n"
+                f"(Path({str(obs_dir)!r}) / f'obs_{{uuid.uuid4().hex[:8]}}.json').write_text(json.dumps(rec), encoding='utf-8')\n"
+                "base = os.environ['ANTHROPIC_BASE_URL'].rstrip('/')\n"
+                "req = urllib.request.Request(\n"
+                "    base + '/v1/messages',\n"
+                "    data=json.dumps({'model': 'claude-sonnet-4-5', 'messages': [{'role': 'user', 'content': 'hi'}]}).encode('utf-8'),\n"
+                "    headers={'Content-Type': 'application/json'},\n"
+                "    method='POST',\n"
+                ")\n"
+                "with urllib.request.urlopen(req, timeout=5) as resp:\n"
+                "    _ = resp.read()\n"
+                f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
+                "print(json.dumps({'result': 'Fixed.\\nSTATUS: success', 'total_cost_usd': 0.0085}))\n"
+            ),
+        )
+
+        env = os.environ.copy()
+        env["HOME"] = str(caller_home)
+        env["RELAY_CLAUDE_BIN"] = str(stub_claude)
+        env["OPENAI_API_KEY"] = "kr7-named-oai"
+        env["ANTHROPIC_API_KEY"] = "kr7-unnamed-ant"
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(gate_script),
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--suite",
+                str(suite_path),
+                "--skill",
+                str(skill_dir),
+                "--reps",
+                "1",
+                "--budget-usd",
+                "0.50",
+                "--pass-env",
+                "OPENAI_API_KEY",
+                "--upstream-url",
+                upstream_url,
+                "--db",
+                str(tmp_path / "kr7.sqlite"),
+                "--html-out",
+                str(tmp_path / "kr7.html"),
+            ],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert proc.returncode == 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        obs_records = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(obs_dir.glob("*.json"))]
+        assert len(obs_records) == 2
+        for rec in obs_records:
+            assert rec["cred_copied"] is False, f"Default real-ab-gate.py copied host credentials: {rec}"
+            assert rec["openai_key"] == "kr7-named-oai", rec
+            assert rec["anthropic_key"] is None, f"Un-named ANTHROPIC_API_KEY leaked via real-ab-gate.py: {rec}"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_kr8_cli_run_prints_per_trial_relay_cost_line_en_and_zh(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KR8: `skill-arena run` per-trial stdout lines print `relay=$...` matching summed `.relay/LOG.md` step costs."""
+    fake_home = tmp_path / "caller_home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    t0 = load_builtin_suite()[0]
+    ref_code = t0.reference_solution_files["rate_limiter.py"]
+    suite_path = tmp_path / "kr8_relay_line_task.json"
+    suite_path.write_text(json.dumps([t0.to_dict()]), encoding="utf-8")
+
+    skill_dir = tmp_path / "kr8-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# KR8 Skill\n", encoding="utf-8")
+
+    # Stub appends a helper step row ($0.0040) to .relay/LOG.md AND returns its main step cost ($0.0095 ctrl / $0.0205 treat)
+    # so summed .relay/LOG.md trial costs are $0.0135 (control) and $0.0245 (treatment).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub_claude = _write_executable(
+        bin_dir / "claude",
+        (
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "_ = sys.stdin.read()\n"
+            "log_md = Path('.relay/LOG.md')\n"
+            "log_md.parent.mkdir(parents=True, exist_ok=True)\n"
+            "with log_md.open('a', encoding='utf-8') as fh:\n"
+            "    fh.write('## 00_helper: ok, 1s, 2026-11-15 00:00\\n- cost $0.0040\\n\\n')\n"
+            "arm = os.environ.get('SKILL_ARENA_CONTENDER', '')\n"
+            "step_cost = 0.0095 if arm == 'arm_control' else 0.0205\n"
+            f"Path('rate_limiter.py').write_text({ref_code!r}, encoding='utf-8')\n"
+            "print(json.dumps({'result': 'Fixed.\\nSTATUS: success', 'total_cost_usd': step_cost}))\n"
+        ),
+    )
+    monkeypatch.setenv("RELAY_CLAUDE_BIN", str(stub_claude))
+
+    for lang_code, pass_badge in (("en", "[PASS]"), ("zh", "[通过]")):
+        db_file = tmp_path / f"relay_line_{lang_code}.sqlite"
+        rc = main(
+            [
+                "--lang",
+                lang_code,
+                "run",
+                "--cli",
+                "claude",
+                "--model",
+                "claude-sonnet-4-5",
+                "--skill",
+                str(skill_dir),
+                "--suite",
+                str(suite_path),
+                "--reps",
+                "1",
+                "--db",
+                str(db_file),
+            ]
+        )
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        trial_lines = [ln for ln in out.splitlines() if ln.startswith(pass_badge)]
+        assert len(trial_lines) == 2, f"Expected 2 per-trial stdout lines for {lang_code}, got: {trial_lines}\n{out}"
+        assert "| relay=$0.0135 |" in trial_lines[0], trial_lines[0]
+        assert "| relay=$0.0245 |" in trial_lines[1], trial_lines[1]
+
+
 
 
 

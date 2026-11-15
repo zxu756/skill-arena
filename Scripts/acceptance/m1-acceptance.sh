@@ -115,6 +115,7 @@ record = {
     "vibe_home": os.environ.get("VIBE_HOME"),
     "ssh_auth_sock_present": "SSH_AUTH_SOCK" in os.environ,
     "claude_code_keys": sorted(k for k in os.environ if k.startswith("CLAUDE_CODE_") or k == "CLAUDECODE"),
+    "api_key_vars": sorted(k for k in os.environ if k.endswith("_API_KEY")),
     "leaked_secret_present": "RANDOM_HOST_SECRET" in os.environ,
     "global_skill_mds": global_skill_mds,
     "workspace_skill_mds": workspace_skill_mds,
@@ -128,6 +129,8 @@ PY
 
   ROW1_DB="${TMP_WORK}/row1.sqlite"
   SSH_AUTH_SOCK="/tmp/fake-ssh.sock" CLAUDE_CODE_MESSAGING_TOKEN="leak-test" RANDOM_HOST_SECRET="leak-test" \
+    ANTHROPIC_API_KEY="fake-ant" OPENAI_API_KEY="fake-oai" MISTRAL_API_KEY="fake-mis" \
+    GOOGLE_API_KEY="fake-goo" GEMINI_API_KEY="fake-gem" \
     RELAY_CLAUDE_BIN="${TMP_WORK}/bin/claude" PATH="${TMP_WORK}/bin:${PATH}" \
     "$PYTHON" -m skill_arena.cli --lang en run \
     --cli claude --model claude-sonnet-4-5 \
@@ -161,6 +164,7 @@ for r in (ctrl, treat):
     assert r["vibe_home"] == f"{r['home']}/.vibe", r
     assert r["ssh_auth_sock_present"] is False, f"SSH_AUTH_SOCK leaked into child env: {r}"
     assert r["claude_code_keys"] == [], f"CLAUDE_CODE_* leaked into child env: {r['claude_code_keys']}"
+    assert r["api_key_vars"] == [], f"Default run forwarded API keys without --pass-env: {r['api_key_vars']}"
     assert r["leaked_secret_present"] is False, f"Host env leaked into child env: {r}"
     assert r["tmpdir"] and not Path(r["tmpdir"]).exists(), f"Per-trial TMPDIR not cleaned up: {r['tmpdir']}"
     assert not Path(r["home"]).exists(), f"Temporary trial HOME was not cleaned up: {r['home']}"
@@ -212,8 +216,8 @@ ref_sol = Path(sys.argv[5]).resolve()
 real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
 outer_home = Path(os.environ["HOME"]).resolve()
 
-# Verify pinned agent-xray commit (4bdbd92dc509d66c7427d0cde50ae0a5870652f6)
-assert PINNED_AGENT_XRAY_COMMIT == "4bdbd92dc509d66c7427d0cde50ae0a5870652f6", PINNED_AGENT_XRAY_COMMIT
+# Verify pinned agent-xray commit (7856d178c4b8ffea5dff52309497739d140ff7f1)
+assert PINNED_AGENT_XRAY_COMMIT == "7856d178c4b8ffea5dff52309497739d140ff7f1", PINNED_AGENT_XRAY_COMMIT
 resolved_xray_sha = get_agent_xray_commit()
 if resolved_xray_sha is not None:
     assert resolved_xray_sha == PINNED_AGENT_XRAY_COMMIT, (resolved_xray_sha, PINNED_AGENT_XRAY_COMMIT)
@@ -797,12 +801,20 @@ PY
   fi
 
   # ------------------------------------------------------------------
-  # Row 7 (W1): Scripted Live M1 Mutations on Isolated Clone
+  # Row 7 (W1 + KR8): Scripted Live M1 Mutations on Isolated Clone
   # ------------------------------------------------------------------
   echo ""
-  echo "[Row 7/7] Running 6 scripted M1 mutation checks on isolated repository clone (W1)..."
+  echo "[Row 7/7] Running 10 scripted M1 mutation checks on isolated repository clone (W1, KR2, KR4, KR6, KR8)..."
   MUT_REPO="${TMP_WORK}/mut_repo"
   git clone -q "$ROOT_DIR" "$MUT_REPO"
+  restore_mut_repo() {
+    if [[ -d "${MUT_REPO:-}/.git" ]]; then
+      git -C "$MUT_REPO" checkout -- . >/dev/null 2>&1 || true
+      git -C "$MUT_REPO" clean -fd >/dev/null 2>&1 || true
+    fi
+    cleanup
+  }
+  trap restore_mut_repo EXIT
   "$PYTHON" - "$ROOT_DIR" "$MUT_REPO" <<'PY'
 import shutil, subprocess, sys
 from pathlib import Path
@@ -962,13 +974,60 @@ assert needle in src, "M1-5 needle missing"
 target_file.write_text(src.replace(needle, "    elif False and (ci_low <= 0.0 <= ci_high):", 1), encoding="utf-8")
 '
 
-  echo "  ROW 7 [PASS]: All 6 M1 mutations failed their exact named tests (exit 1) and restored cleanly."
+  verify_named_mutation \
+    "Mutation M1-KR2a (disable cumulative --budget-usd pre-trial halt)" \
+    "src/skill_arena/runners/harness_driver.py" \
+    "tests/test_cli.py" \
+    "test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget" \
+    '
+needle = "        remaining = float(self.budget_usd) - self.cumulative_cost_usd"
+assert needle in src, "M1-KR2a needle missing"
+target_file.write_text(src.replace(needle, "        return (True, float(self.budget_usd))", 1), encoding="utf-8")
+'
+
+  verify_named_mutation \
+    "Mutation M1-KR2b (return exit 0 instead of EXIT_BUDGET_EXCEEDED on budget halt)" \
+    "src/skill_arena/cli.py" \
+    "tests/test_cli.py" \
+    "test_kr8_budget_halt_returns_dedicated_exit_code_and_discloses_first_trial_overrun" \
+    '
+needle = "        if bool(report.get(\"budget_stopped\")):\n            return EXIT_BUDGET_EXCEEDED"
+assert needle in src, "M1-KR2b needle missing"
+target_file.write_text(src.replace(needle, "        if bool(report.get(\"budget_stopped\")):\n            return 0", 1), encoding="utf-8")
+'
+
+  verify_named_mutation \
+    "Mutation M1-KR4 (bypass child env allowlist and inherit SSH_AUTH_SOCK / CLAUDE_CODE_*)" \
+    "src/skill_arena/runners/harness_driver.py" \
+    "tests/test_sandbox.py" \
+    "test_kr4_strict_child_env_allowlist_blocks_ssh_claude_code_and_host_secrets" \
+    '
+needle_init = "    allowed: dict[str, str] = {}"
+needle_strip = "    for forbidden in _FORBIDDEN_CHILD_ENV_KEYS:\n        allowed.pop(forbidden, None)\n    for key in [k for k in allowed if k.startswith(\"CLAUDE_CODE_\")]:\n        allowed.pop(key, None)"
+assert needle_init in src and needle_strip in src, "M1-KR4 needle missing"
+patched = src.replace(needle_init, "    allowed: dict[str, str] = dict(os.environ)", 1)
+patched = patched.replace(needle_strip, "    pass", 1)
+target_file.write_text(patched, encoding="utf-8")
+'
+
+  verify_named_mutation \
+    "Mutation M1-KR6 (forward OPENAI_API_KEY and ANTHROPIC_API_KEY by default without --pass-env)" \
+    "src/skill_arena/runners/harness_driver.py" \
+    "tests/test_sandbox.py" \
+    "test_kr6_zero_api_keys_forwarded_by_default_and_pass_env_forwards_only_named_vars" \
+    '
+needle = "    \"VIRTUAL_ENV\","
+assert needle in src, "M1-KR6 needle missing"
+target_file.write_text(src.replace(needle, "    \"VIRTUAL_ENV\",\n    \"OPENAI_API_KEY\",\n    \"ANTHROPIC_API_KEY\",", 1), encoding="utf-8")
+'
+
+  echo "  ROW 7 [PASS]: All 10 M1 mutations failed their exact named tests (exit 1) and restored cleanly."
 
   M1_PASSED=$((6 + ROW6_PASSED))
   echo ""
   echo "================================================================"
   echo "M1 ACCEPTANCE SUMMARY: ${M1_PASSED} passed, ${ROW6_SKIPPED} skipped"
-  echo "RESULT: ALL M1 OFFLINE ACCEPTANCE CHECKS & 6 MUTATIONS PASSED (Row 6 live A/B: SKIPPED / 没跑)"
+  echo "RESULT: ALL M1 OFFLINE ACCEPTANCE CHECKS & 10 MUTATIONS PASSED (Row 6 live A/B: SKIPPED / 没跑)"
   echo "================================================================"
 }
 
