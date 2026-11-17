@@ -1,16 +1,16 @@
 ================================================================
 SkillArena Milestone M1 Acceptance Suite (Isolated HOME + relay.sh + agent-xray + 95% CI)
-Workspace: <REPO_ROOT> (branch: m1/real)
+Workspace: <REPO_ROOT> (branch: main)
 ================================================================
 
 [Row 1/7] Per-trial isolated HOME & skill directories (Control=0 skills, Treatment=only candidate)...
   ROW 1 [PASS]: Control global_skills=0, workspace_skills=0; Treatment saw ONLY 'candidate-alpha' (0 host skills leaked); isolated HOMEs distinct & cleaned up.
 
 [Row 2/7] Marker-file isolation probe ($HOME/.claude/kr1_probe_<uuid>.marker & $HOME/.agents/skills/kr1_probe_<uuid>/SKILL.md) + relay.sh & pinned agent-xray check...
-  ROW 2 [PASS]: Stub wrote 2x kr1_probe_<uuid> markers inside isolated HOME (.claude/*.marker & .agents/skills/*/SKILL.md verified True during trial); 0 markers in real ~/.claude or ~/.agents/skills; pinned agent-xray=7856d178c4; relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned.
+  ROW 2 [PASS]: Stub wrote 2x kr1_probe_<uuid> markers inside isolated HOME (.claude/*.marker & .agents/skills/*/SKILL.md verified True during trial); 0 markers in real ~/.claude or ~/.agents/skills; pinned agent-xray=3cd9b14dcb; relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned.
 
 [Row 3/7] Fake SSE upstream emitting 1 event every 200ms (TTFT error <= 50ms)...
-  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[210.35, 205.96, 210.15, 208.8, 210.75], actual_first_chunk_ms=[207.72, 205.34, 209.66, 208.11, 210.07], min_abs_err=0.49ms, median_abs_err=0.67ms, max_abs_err=2.63ms (<= 50.0 ms), total_stream_ms=[1031, 1032, 1038, 1021, 1034]
+  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[205.77, 210.09, 205.93, 205.87, 206.02], actual_first_chunk_ms=[203.9, 207.47, 205.14, 205.12, 205.13], min_abs_err=0.75ms, median_abs_err=0.89ms, max_abs_err=2.61ms (<= 50.0 ms), total_stream_ms=[1018, 1016, 1022, 1019, 1019]
 
 [Row 4/7] OpenAI Responses API (/v1/responses) streaming SSE & non-streaming JSON usage...
   ROW 4 [PASS]: /v1/responses streaming SSE & non-streaming JSON both recorded exact uncached_input=400, cached_input=800, total_prompt=1200, output=150, cost_usd=$0.002100.
@@ -19,7 +19,7 @@ Workspace: <REPO_ROOT> (branch: m1/real)
   ROW 5 [PASS]: 20 vs 20 equal-rate trials (10/20 vs 10/20) -> delta=+0.0000, 95% Newcombe-Wilson CI=[-0.2838, +0.2838], verdict='inconclusive' ('看不出差别' / 'Inconclusive'), winner=None, ranks=[None, None], HTML craft 0 warnings.
 
 [Part 2 / K13] Detached double-fork + setsid + close-fds + chdir('/') check under isolated HOME...
-  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [50596, 50685] killed, recorded in leaked_processes, and trials marked FAILED (2.38s).
+  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [49501, 49604] killed, recorded in leaked_processes, and trials marked FAILED (4.87s).
 
 [Row 6/7] Live 8-task real-agent A/B gate (SKILL_ARENA_REAL_AB)...
   SKIPPED (没跑): SKILL_ARENA_REAL_AB!=1; live paid 8-task real-agent A/B requires explicit user approval and API budget.
