@@ -89,6 +89,30 @@ def is_forbidden_agent_path(rel_path: str, protected_paths: set[str]) -> bool:
     return False
 
 
+_NEW_AGENT_TEST_FILE_RE = re.compile(r"^tests?/(?:[A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_]+\.py$")
+
+
+def is_permitted_new_agent_test_file(rel_path: str, protected_paths: set[str]) -> bool:
+    """Return True for a NEW plain test module the agent wrote itself (e.g. `tests/test_extra.py`).
+
+    Skills such as test-driven development make an agent write its own tests. Adding such a file is
+    not tampering: it is still treated as a forbidden path for the clean grading checkout (never copied
+    there), so it cannot influence the verdict. Only brand-new `test_*.py` modules under `tests/` qualify;
+    editing or deleting any existing file, protected tests, `conftest.py`, `__init__.py`, helper modules
+    and stdlib shadows stay violations.
+    """
+    norm = rel_path.strip("/").replace("\\", "/")
+    if not norm or norm in protected_paths:
+        return False
+    if not _NEW_AGENT_TEST_FILE_RE.match(norm):
+        return False
+    filename = norm.rsplit("/", 1)[-1]
+    if filename in _FORBIDDEN_CONFIG_FILENAMES:
+        return False
+    stem = filename[:-3]
+    return stem not in _STDLIB_AND_RUNNER_MODULES
+
+
 def _snapshot_workspace_files(root: Path, baseline_include_harness: bool = False) -> tuple[dict[str, bytes], list[str]]:
     """Return (regular_files_bytes, symlink_rel_paths) inside `root` excluding harness/cache dirs."""
     files: dict[str, bytes] = {}
@@ -322,6 +346,9 @@ class SandboxHandle:
             base_bytes = self.baseline_files.get(rel_path)
             cur_bytes = current_files.get(rel_path)
             if base_bytes == cur_bytes:
+                continue
+            if base_bytes is None and is_permitted_new_agent_test_file(rel_path, protected_set):
+                # New agent-written test module: allowed, but never copied into the grading checkout.
                 continue
             if is_forbidden_agent_path(rel_path, protected_set):
                 _mark(rel_path)

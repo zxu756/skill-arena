@@ -205,3 +205,78 @@ def test_missing_pytest_in_grading_python_fails_preflight_immediately(
     finally:
         pool.release(handle)
         pool.close()
+
+
+@pytest.mark.parametrize(
+    "new_test_rel_path",
+    ["tests/test_agent_written_extra.py", "tests/unit/test_agent_nested.py"],
+)
+def test_agent_may_add_new_test_files_without_anti_cheat_violation(
+    tmp_path: Path,
+    new_test_rel_path: str,
+) -> None:
+    """A skill such as TDD makes the agent write its own tests first. Adding a NEW test file is not
+    cheating: it is excluded from the clean grading checkout, so it cannot influence the verdict."""
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = load_builtin_suite()[0]
+    handle = pool.acquire(task, "new_test_ok")
+    try:
+        for rel, src in task.reference_solution_files.items():
+            (handle.root / rel).write_text(src, encoding="utf-8")
+        extra = handle.root / new_test_rel_path
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text("import unittest\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertTrue(True)\n", encoding="utf-8")
+
+        verdict, _ = evaluate_sandbox(handle, task)
+        assert verdict.anti_cheat_clean, verdict.tampered_test_files
+        assert new_test_rel_path not in verdict.tampered_test_files
+        assert verdict.passed
+    finally:
+        pool.release(handle)
+        pool.close()
+
+
+def test_new_agent_test_file_cannot_rescue_a_wrong_solution(tmp_path: Path) -> None:
+    """The new test file is never copied into the grading checkout, so an os._exit(0) inside it
+    cannot turn a wrong solution into a pass."""
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = load_builtin_suite()[0]
+    handle = pool.acquire(task, "new_test_rescue")
+    try:
+        (handle.root / "rate_limiter.py").write_text(
+            "class TokenBucket:\n    def __init__(self, *a, **kw): pass\n    def try_acquire(self, *a): return True\n",
+            encoding="utf-8",
+        )
+        (handle.root / "tests" / "test_zz_exit.py").write_text("import os\nos._exit(0)\n", encoding="utf-8")
+
+        verdict, _ = evaluate_sandbox(handle, task)
+        assert not verdict.passed
+    finally:
+        pool.release(handle)
+        pool.close()
+
+
+@pytest.mark.parametrize(
+    "still_forbidden",
+    ["tests/conftest.py", "tests/__init__.py", "tests/helper_extra.py", "tests/unittest.py", "test_root_level.py"],
+)
+def test_new_files_under_tests_that_are_not_plain_test_modules_stay_forbidden(
+    tmp_path: Path,
+    still_forbidden: str,
+) -> None:
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = load_builtin_suite()[0]
+    handle = pool.acquire(task, "new_test_forbidden")
+    try:
+        for rel, src in task.reference_solution_files.items():
+            (handle.root / rel).write_text(src, encoding="utf-8")
+        bad = handle.root / still_forbidden
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.write_text("X = 1\n", encoding="utf-8")
+
+        verdict, _ = evaluate_sandbox(handle, task)
+        assert not verdict.anti_cheat_clean
+        assert still_forbidden in verdict.tampered_test_files
+    finally:
+        pool.release(handle)
+        pool.close()
