@@ -15,7 +15,7 @@ import urllib.parse
 
 from skill_arena.models import TokenUsageLedger
 
-PINNED_AGENT_XRAY_COMMIT = "7856d178c4b8ffea5dff52309497739d140ff7f1"
+PINNED_AGENT_XRAY_COMMIT = "3cd9b14dcbae54505c56f982d13fae862d606e5a"
 
 
 def get_agent_xray_commit(target: ModuleType | Path | None = None) -> str | None:

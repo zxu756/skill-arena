@@ -216,8 +216,8 @@ ref_sol = Path(sys.argv[5]).resolve()
 real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
 outer_home = Path(os.environ["HOME"]).resolve()
 
-# Verify pinned agent-xray commit (7856d178c4b8ffea5dff52309497739d140ff7f1)
-assert PINNED_AGENT_XRAY_COMMIT == "7856d178c4b8ffea5dff52309497739d140ff7f1", PINNED_AGENT_XRAY_COMMIT
+# Verify pinned agent-xray commit (3cd9b14dcbae54505c56f982d13fae862d606e5a)
+assert PINNED_AGENT_XRAY_COMMIT == "3cd9b14dcbae54505c56f982d13fae862d606e5a", PINNED_AGENT_XRAY_COMMIT
 resolved_xray_sha = get_agent_xray_commit()
 if resolved_xray_sha is not None:
     assert resolved_xray_sha == PINNED_AGENT_XRAY_COMMIT, (resolved_xray_sha, PINNED_AGENT_XRAY_COMMIT)

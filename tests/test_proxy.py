@@ -362,7 +362,7 @@ def test_pinned_agent_xray_commit_matches_loaded_repo(
 ) -> None:
     import tomllib
 
-    expected_sha = "7856d178c4b8ffea5dff52309497739d140ff7f1"
+    expected_sha = "3cd9b14dcbae54505c56f982d13fae862d606e5a"
     assert PINNED_AGENT_XRAY_COMMIT == expected_sha
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -398,7 +398,7 @@ def test_pinned_agent_xray_commit_matches_loaded_repo(
     for k in list(saved_modules):
         sys.modules.pop(k, None)
     try:
-        with pytest.raises(RuntimeError, match="PINNED_AGENT_XRAY_COMMIT|7856d178"):
+        with pytest.raises(RuntimeError, match="PINNED_AGENT_XRAY_COMMIT|3cd9b14"):
             _load_agent_xray(repo_root=fake_arena_repo, verify_pin=True)
         for k in list(sys.modules):
             if k == "agent_xray" or k.startswith("agent_xray."):
