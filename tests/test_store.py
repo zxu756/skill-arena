@@ -147,7 +147,7 @@ def test_simulated_experiment_persists_simulated_flags_in_db_and_report(tmp_path
         assert row["is_simulated"] is True
 
 
-def test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner(tmp_path: Path) -> None:
+def test_paired_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner(tmp_path: Path) -> None:
     for label_case, ctrl_passes, treat_passes in (
         ("half", 10, 10),
         ("all_pass", 20, 20),
@@ -165,7 +165,7 @@ def test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner(
 
         report = db.build_comparison_report(exp_id)
         sc = report["statistical_comparison"]
-        assert sc["method"] == "newcombe_wilson_95"
+        assert sc["method"] == "paired_task_t_95"
         assert sc["control_trials"] == 20
         assert sc["treatment_trials"] == 20
         assert sc["ci_low"] < 0.0 < sc["ci_high"], f"Expected non-zero 95% CI spanning 0 for {label_case}, got {sc}"
@@ -177,7 +177,7 @@ def test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner(
             assert row["rank"] is None
 
 
-def test_newcombe_wilson_ci_clear_separation_ranks_winner_and_small_sample_is_inconclusive(tmp_path: Path) -> None:
+def test_paired_ci_clear_separation_ranks_winner_and_small_sample_is_inconclusive(tmp_path: Path) -> None:
     db = ArenaDatabase(tmp_path / "ci_sep.sqlite")
     ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="claude-sonnet-4-5")
     treat = ContenderConfig(contender_id="treat", label="Treatment", role="treatment", cli="claude", model="claude-sonnet-4-5")
@@ -295,3 +295,95 @@ def test_kr3_parse_relay_log_md_sums_step_costs_and_surfaces_alongside_xray_cost
     assert "trials" in rep and len(rep["trials"]) == 4
     assert [tr["relay_cost_usd"] for tr in rep["trials"]] == [0.015, 0.016, 0.021, 0.022]
 
+
+
+def _paired_experiment(tmp_path: Path, name: str, outcomes: dict[str, tuple[list[bool], list[bool]]]):
+    db = ArenaDatabase(tmp_path / f"{name}.sqlite")
+    ctrl = ContenderConfig(contender_id="ctrl", label="Control", role="control", cli="claude", model="m")
+    treat = ContenderConfig(contender_id="treat", label="Treatment", role="treatment", cli="claude", model="m")
+    k = max(len(c) for c, _ in outcomes.values())
+    db.create_experiment(name, title=name, suite_name="s", k_reps=k, contenders=[ctrl, treat])
+    return db, ctrl, treat
+
+
+def test_paired_ci_uses_task_as_unit_and_reports_mde(tmp_path: Path) -> None:
+    """Round-3 shape: 7 tasks tie, one task 1/3 vs 3/3. Task-paired t interval, not 48 pooled Bernoullis."""
+    outcomes = {f"t{i}": ([True] * 3, [True] * 3) for i in range(6)}
+    outcomes["ui1"] = ([False] * 3, [False] * 3)
+    outcomes["ui2"] = ([False, True, False], [True] * 3)
+    db, ctrl, treat = _paired_experiment(tmp_path, "exp_r3", outcomes)
+    for tid, (c_res, t_res) in outcomes.items():
+        for rep, ok in enumerate(c_res, 1):
+            db.record_trial(_make_trial("exp_r3", tid, ctrl, rep, ok))
+        for rep, ok in enumerate(t_res, 1):
+            db.record_trial(_make_trial("exp_r3", tid, treat, rep, ok))
+
+    sc = db.build_comparison_report("exp_r3")["statistical_comparison"]
+    assert sc["method"] == "paired_task_t_95"
+    assert sc["tasks_paired"] == 8
+    assert sc["degrees_of_freedom"] == 7
+    assert sc["critical_value"] == 2.365
+    assert sc["delta_pass_rate"] == 0.0833
+    # between-task SE = sqrt(0.3889 / 56) = 0.0833; within (Agresti-Caffo) = sqrt(0.528) / 8 = 0.0908
+    assert sc["se_between_tasks"] == 0.0833
+    assert sc["se_within_tasks"] == 0.0908
+    assert sc["standard_error"] == 0.0908
+    assert sc["ci_low"] == -0.1315 and sc["ci_high"] == 0.2981
+    assert sc["min_detectable_effect_80"] == 0.2913
+    assert sc["verdict"] == "inconclusive"
+
+
+def test_paired_ci_between_task_spread_widens_interval(tmp_path: Path) -> None:
+    """Heterogeneous per-task effects (+1, -1, +1, -1 ...) must not look significant."""
+    outcomes = {}
+    for i in range(6):
+        good, bad = [True] * 5, [False] * 5
+        outcomes[f"t{i}"] = (bad, good) if i % 2 == 0 else (good, bad)
+    outcomes["t6"] = ([False] * 5, [True] * 5)
+    db, ctrl, treat = _paired_experiment(tmp_path, "exp_spread", outcomes)
+    for tid, (c_res, t_res) in outcomes.items():
+        for rep, ok in enumerate(c_res, 1):
+            db.record_trial(_make_trial("exp_spread", tid, ctrl, rep, ok))
+        for rep, ok in enumerate(t_res, 1):
+            db.record_trial(_make_trial("exp_spread", tid, treat, rep, ok))
+    sc = db.build_comparison_report("exp_spread")["statistical_comparison"]
+    assert sc["se_between_tasks"] > sc["se_within_tasks"]
+    assert sc["standard_error"] == sc["se_between_tasks"]
+    assert sc["ci_low"] < 0.0 < sc["ci_high"]
+    assert sc["verdict"] == "inconclusive"
+
+
+def test_interrupted_trials_over_ten_percent_invalidate_the_run(tmp_path: Path) -> None:
+    db, ctrl, treat = _paired_experiment(tmp_path, "exp_int", {"t1": ([True] * 20, [True] * 20)})
+    for rep in range(1, 21):
+        c_trial = _make_trial("exp_int", "t1", ctrl, rep, rep <= 18)
+        t_trial = _make_trial("exp_int", "t1", treat, rep, rep <= 2)
+        if rep > 17:
+            t_trial.usage.relay_status = "failed (exit 3: outcome deadline, stop_reason interrupted)"
+        if rep == 20:
+            c_trial.verdict.summary = "AGENT TIMEOUT: agent execution exceeded 90s limit (超时判败)"
+        db.record_trial(c_trial)
+        db.record_trial(t_trial)
+    report = db.build_comparison_report("exp_int")
+    sc = report["statistical_comparison"]
+    assert sc["control_interrupted"] == 1 and sc["treatment_interrupted"] == 3
+    assert sc["treatment_interrupted_fraction"] == 0.15
+    assert sc["ci_high"] < 0.0, "the interval alone would name a winner"
+    assert sc["verdict"] == "invalid"
+    assert sc["winner"] is None
+    assert "实验无效" in sc["verdict_label_zh"] and "timeout_sec" in sc["verdict_label_en"]
+    for row in report["leaderboard"]:
+        assert row["rank"] is None
+
+
+def test_interrupted_at_ten_percent_is_still_valid(tmp_path: Path) -> None:
+    db, ctrl, treat = _paired_experiment(tmp_path, "exp_int10", {"t1": ([True] * 20, [True] * 20)})
+    for rep in range(1, 21):
+        t_trial = _make_trial("exp_int10", "t1", treat, rep, rep <= 18)
+        if rep > 18:
+            t_trial.usage.relay_status = "timeout after 60s"
+        db.record_trial(_make_trial("exp_int10", "t1", ctrl, rep, rep <= 2))
+        db.record_trial(t_trial)
+    sc = db.build_comparison_report("exp_int10")["statistical_comparison"]
+    assert sc["treatment_interrupted_fraction"] == 0.1
+    assert sc["verdict"] == "treatment_better"

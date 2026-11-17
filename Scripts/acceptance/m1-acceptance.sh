@@ -698,7 +698,7 @@ for label, hpath in (("zh", html_zh_path), ("en", html_en_path)):
 
 print(
     f"  ROW 5 [PASS]: 20 vs 20 equal-rate trials (10/20 vs 10/20) -> "
-    f"delta={stat['delta_pass_rate']:+.4f}, 95% Newcombe-Wilson CI=[{stat['ci_low']:+.4f}, {stat['ci_high']:+.4f}], "
+    f"delta={stat['delta_pass_rate']:+.4f}, 95% task-paired CI=[{stat['ci_low']:+.4f}, {stat['ci_high']:+.4f}], "
     f"verdict='inconclusive' ('看不出差别' / 'Inconclusive'), winner=None, ranks=[None, None], HTML craft 0 warnings."
 )
 PY
@@ -964,10 +964,10 @@ target_file.write_text(src.replace(needle, "in_cache_read = 0", 1), encoding="ut
 '
 
   verify_named_mutation \
-    "Mutation M1-5 (rank winner without Newcombe-Wilson CI spans-zero check)" \
+    "Mutation M1-5 (rank winner without task-paired CI spans-zero check)" \
     "src/skill_arena/store/arena_db.py" \
     "tests/test_store.py" \
-    "test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner" \
+    "test_paired_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner" \
     '
 needle = "    elif ci_low <= 0.0 <= ci_high:"
 assert needle in src, "M1-5 needle missing"

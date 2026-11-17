@@ -1014,7 +1014,18 @@ def test_kr5_simulated_verdict_line_carries_simulated_tag_in_cli_and_html(
     html_en = tmp_path / "sim_win_en.html"
     html_zh = tmp_path / "sim_win_zh.html"
 
-    # concurrency x 5 reps = 10 trials per arm -> simulated Treatment wins with 95% CI > 0
+    # 6 non-UI builtin tasks x 5 reps -> simulated Treatment wins with a task-paired 95% CI > 0.
+    # (The 2-task concurrency suite is too few: the task, not the trial, is the unit of analysis.
+    # UI tasks are left out because their simulated page diffs are embedded in the report HTML.)
+    import json as _json
+
+    from skill_arena.suites.builtin_tasks import load_builtin_suite
+
+    suite_file = tmp_path / "non_ui_suite.json"
+    suite_file.write_text(
+        _json.dumps([t.to_dict() for t in load_builtin_suite() if not t.task_id.startswith("ui-")]),
+        encoding="utf-8",
+    )
     assert (
         main(
             [
@@ -1024,7 +1035,7 @@ def test_kr5_simulated_verdict_line_carries_simulated_tag_in_cli_and_html(
                 "--cli",
                 "simulate",
                 "--suite",
-                "concurrency",
+                str(suite_file),
                 "--reps",
                 "5",
                 "--db",
@@ -1062,7 +1073,7 @@ def test_kr5_simulated_verdict_line_carries_simulated_tag_in_cli_and_html(
 
 
 def test_kr5_readmes_disclose_newcombe_wilson_repeated_reps_independence_assumption() -> None:
-    """KR5: Both READMEs disclose that Newcombe-Wilson treats repeated task runs (--reps > 1) as independent samples."""
+    """KR5: Both READMEs explain that repeated task runs are not independent samples and how the interval handles it."""
     repo_root = Path(__file__).resolve().parents[1]
     readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
     readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
@@ -1070,10 +1081,14 @@ def test_kr5_readmes_disclose_newcombe_wilson_repeated_reps_independence_assumpt
     assert "independent" in readme_en.lower()
     assert "--reps" in readme_en
     assert "narrower" in readme_en.lower()
+    assert "minimum detectable effect" in readme_en.lower()
+    assert "invalid run" in readme_en.lower()
 
     assert "独立样本" in readme_zh or "独立试验" in readme_zh
     assert "--reps" in readme_zh
     assert "偏窄" in readme_zh
+    assert "最小可检测差别" in readme_zh
+    assert "实验无效" in readme_zh
 
 
 def test_kr5_real_ab_gate_script_executes_offline_against_local_stub_and_fake_upstream(

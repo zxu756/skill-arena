@@ -24,7 +24,7 @@ class TaskSpec:
     naive_attempt_files: dict[str, str] = field(default_factory=dict)
     frontend_target_html: str | None = None
     max_diff_lines: int = 120
-    timeout_sec: int = 90
+    timeout_sec: int = 900
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -46,7 +46,7 @@ class TaskSpec:
             naive_attempt_files=dict(payload.get("naive_attempt_files", {})),
             frontend_target_html=payload.get("frontend_target_html"),
             max_diff_lines=int(payload.get("max_diff_lines", 120)),
-            timeout_sec=int(payload.get("timeout_sec", 90)),
+            timeout_sec=int(payload.get("timeout_sec", 900)),
         )
 
 

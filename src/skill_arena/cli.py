@@ -272,7 +272,14 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
             ci_h_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
             print(
                 f"统计结论：{stat_comp.get('verdict_label_zh', '看不出差别')} | "
-                f"Pass@1 差值 {delta_pp:+.1f} pp，95% Newcombe-Wilson 置信区间 [{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
+                f"Pass@1 差值 {delta_pp:+.1f} pp，95% 置信区间（按题配对）[{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
+            )
+            mde_pp = float(stat_comp.get("min_detectable_effect_80", 0.0)) * 100.0
+            int_c = float(stat_comp.get("control_interrupted_fraction", 0.0)) * 100.0
+            int_t = float(stat_comp.get("treatment_interrupted_fraction", 0.0)) * 100.0
+            print(
+                f"统计说明：配对 {int(stat_comp.get('tasks_paired', 0))} 道题；这次实验能可靠看出的最小差别约 {mde_pp:.1f} pp"
+                f"（80% 把握）；被时限打断：对照组 {int_c:.0f}%、实验组 {int_t:.0f}%"
             )
         print("指标说明：胜率Elo = 成对胜率换算的 Elo（双组）；首轮上下文税 = 实验组与对照组首轮输入 Token 均值之差。")
         return
@@ -354,7 +361,14 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
         ci_h_pp = float(stat_comp.get("ci_high", 0.0)) * 100.0
         print(
             f"Verdict: {stat_comp.get('verdict_label_en', 'Inconclusive')} | "
-            f"Pass@1 delta {delta_pp:+.1f} pp, 95% Newcombe-Wilson CI [{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
+            f"Pass@1 delta {delta_pp:+.1f} pp, 95% task-paired CI [{ci_l_pp:+.1f} pp, {ci_h_pp:+.1f} pp]"
+        )
+        mde_pp = float(stat_comp.get("min_detectable_effect_80", 0.0)) * 100.0
+        int_c = float(stat_comp.get("control_interrupted_fraction", 0.0)) * 100.0
+        int_t = float(stat_comp.get("treatment_interrupted_fraction", 0.0)) * 100.0
+        print(
+            f"Stats: {int(stat_comp.get('tasks_paired', 0))} paired tasks; minimum detectable effect ~{mde_pp:.1f} pp "
+            f"(80% power); hit time limit: control {int_c:.0f}%, treatment {int_t:.0f}%"
         )
     print(
         "Metrics: WR Elo = Win-Rate Derived Elo (2-arm); "

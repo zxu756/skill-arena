@@ -126,6 +126,12 @@ def render_arena_html(
         kpi1_tone_cls = "tone-ctrl"
         kpi1_val_str = lift_str
         verdict_short = "对照组显著占优" if is_zh else "Control wins (95% CI < 0)"
+    elif stat_verdict == "invalid":
+        kpi1_tone_cls = ""
+        kpi1_val_str = "实验无效" if is_zh else "Invalid run"
+        verdict_short = (
+            "被时限打断的试验过多，不排定名次" if is_zh else "Too many trials hit the time limit; no rank"
+        )
     else:
         kpi1_tone_cls = ""
         kpi1_val_str = "看不出差别" if is_zh else "Inconclusive"
@@ -1195,6 +1201,8 @@ def render_arena_html(
           noneHostOptIn: "None in workspace (host HOME opted-in)",
           inconclusiveWord: "Inconclusive",
           inconclusiveShort: "Inconclusive (no rank)",
+          invalidWord: "Invalid run",
+          invalidShort: "Too many trials hit the time limit; no rank",
           treatWinsShort: "Treatment wins (95% CI > 0)",
           ctrlWinsShort: "Control wins (95% CI < 0)",
           zeroBaseline: "0 tok (baseline)",
@@ -1275,6 +1283,8 @@ def render_arena_html(
           noneHostOptIn: "工作区未挂载（显式启用宿主 HOME）",
           inconclusiveWord: "看不出差别",
           inconclusiveShort: "看不出差别（不排定名次）",
+          invalidWord: "实验无效",
+          invalidShort: "被时限打断的试验过多，不排定名次",
           treatWinsShort: "实验组显著占优",
           ctrlWinsShort: "对照组显著占优",
           zeroBaseline: "0 tok（基线）",
@@ -1536,6 +1546,9 @@ def render_arena_html(
           kpi1ValEl.classList.add("tone-ctrl");
           kpi1ValEl.textContent = liftStr;
           verdictShort = t.ctrlWinsShort;
+        }} else if (sVerdict === "invalid") {{
+          kpi1ValEl.textContent = t.invalidWord;
+          verdictShort = t.invalidShort;
         }} else {{
           kpi1ValEl.textContent = t.inconclusiveWord;
         }}

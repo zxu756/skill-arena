@@ -38,28 +38,95 @@ def compute_wilson_ci_95(successes: int, total: int, z: float = WILSON_Z_95) -> 
     return (max(0.0, center - half), min(1.0, center + half))
 
 
-def compute_newcombe_wilson_comparison(
+# Two-sided 97.5% Student-t quantiles for df = 1..30.
+_T_975 = (
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+    2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+    2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+)
+Z_POWER_80 = 0.8416212335729143
+MAX_INTERRUPTED_FRACTION = 0.10
+
+
+def student_t_975(df: int) -> float:
+    """Two-sided 95% critical value of Student's t (Cornish-Fisher beyond the table)."""
+    if df <= 0:
+        return WILSON_Z_95
+    if df <= len(_T_975):
+        return _T_975[df - 1]
+    z = WILSON_Z_95
+    return z + (z**3 + z) / (4.0 * df) + (5 * z**5 + 16 * z**3 + 3 * z) / (96.0 * df * df)
+
+
+def trial_was_interrupted(trial: TrialResult) -> bool:
+    """True when the agent was stopped by the time limit instead of finishing on its own."""
+    status = (trial.usage.relay_status or "").lower()
+    if any(marker in status for marker in ("timeout", "deadline", "interrupted")):
+        return True
+    return (trial.verdict.summary or "").startswith("AGENT TIMEOUT")
+
+
+def compute_paired_task_comparison(
     *,
     control_id: str | None,
     treatment_id: str | None,
-    control_passed: int,
-    control_trials: int,
-    treatment_passed: int,
-    treatment_trials: int,
+    per_task: list[tuple[int, int, int, int]],
+    control_interrupted: int = 0,
+    treatment_interrupted: int = 0,
 ) -> dict[str, Any]:
-    """Newcombe Method 10 hybrid Wilson 95% CI on Pass@1 difference (p_treatment - p_control)."""
-    n_c = max(0, int(control_trials))
-    n_t = max(0, int(treatment_trials))
-    k_c = max(0, min(int(control_passed), n_c))
-    k_t = max(0, min(int(treatment_passed), n_t))
-    p_c = (k_c / n_c) if n_c > 0 else 0.0
-    p_t = (k_t / n_t) if n_t > 0 else 0.0
+    """95% CI on the Pass@1 difference, paired by task (Miller 2024, arXiv 2411.00640, §3-4).
+
+    ``per_task`` holds ``(control_passed, control_trials, treatment_passed, treatment_trials)``
+    for every task both arms ran. Repeats of one task are correlated, so each task is
+    reduced to its pass rate first and the task is the unit of analysis:
+
+    * between-task SE: ``sqrt(sum((d_i - d_bar)^2) / (n (n - 1)))`` with ``d_i = p_T,i - p_C,i``;
+    * within-task SE: ``sqrt(sum(v_i)) / n`` with Agresti-Caffo variances
+      ``v_i = p~(1 - p~) / (k + 2)``, ``p~ = (x + 1) / (k + 2)`` per arm, which stays
+      non-zero when a task passes or fails every repeat.
+
+    The larger of the two is used (conservative), with a Student-t critical value on
+    ``n - 1`` degrees of freedom (normal when only one task). The minimum detectable
+    effect at 80% power is ``(t + z_0.8) * SE``. If more than 10% of either arm's trials
+    were stopped by the time limit the run is reported as invalid and no winner is named.
+    """
+    rows = [
+        (max(0, min(int(xc), int(kc))), max(0, int(kc)), max(0, min(int(xt), int(kt))), max(0, int(kt)))
+        for xc, kc, xt, kt in per_task
+        if int(kc) > 0 and int(kt) > 0
+    ]
+    n = len(rows)
+    n_c = sum(r[1] for r in rows)
+    n_t = sum(r[3] for r in rows)
+    k_c = sum(r[0] for r in rows)
+    k_t = sum(r[2] for r in rows)
+    p_c = sum(r[0] / r[1] for r in rows) / n if n else 0.0
+    p_t = sum(r[2] / r[3] for r in rows) / n if n else 0.0
     delta = p_t - p_c
 
-    l_c, u_c = compute_wilson_ci_95(k_c, n_c)
-    l_t, u_t = compute_wilson_ci_95(k_t, n_t)
-    ci_low = max(-1.0, delta - math.sqrt((p_t - l_t) ** 2 + (u_c - p_c) ** 2))
-    ci_high = min(1.0, delta + math.sqrt((u_t - p_t) ** 2 + (p_c - l_c) ** 2))
+    if n:
+        diffs = [r[2] / r[3] - r[0] / r[1] for r in rows]
+        mean_d = sum(diffs) / n
+        se_between = math.sqrt(sum((d - mean_d) ** 2 for d in diffs) / (n * (n - 1))) if n > 1 else 0.0
+
+        def _ac_var(x: int, k: int) -> float:
+            p_tilde = (x + 1.0) / (k + 2.0)
+            return p_tilde * (1.0 - p_tilde) / (k + 2.0)
+
+        se_within = math.sqrt(sum(_ac_var(r[0], r[1]) + _ac_var(r[2], r[3]) for r in rows)) / n
+    else:
+        se_between = 0.0
+        se_within = 0.5
+    se = max(se_between, se_within)
+    df = n - 1 if n > 1 else 0
+    crit = student_t_975(df)
+    ci_low = max(-1.0, delta - crit * se)
+    ci_high = min(1.0, delta + crit * se)
+    mde = min(1.0, (crit + Z_POWER_80) * se)
+
+    frac_c = (control_interrupted / n_c) if n_c else 0.0
+    frac_t = (treatment_interrupted / n_t) if n_t else 0.0
+    worst_frac = max(frac_c, frac_t)
 
     if control_id is None or treatment_id is None or control_id == treatment_id:
         verdict = "inconclusive"
@@ -72,6 +139,19 @@ def compute_newcombe_wilson_comparison(
         min_n = min(n_c, n_t)
         label_zh = f"看不出差别（每组试验数 n={min_n} < {MIN_TRIALS_FOR_RANKING}，样本过少不排定名次）"
         label_en = f"Inconclusive (n={min_n} < {MIN_TRIALS_FOR_RANKING} trials per arm; no rank assigned)"
+    elif worst_frac > MAX_INTERRUPTED_FRACTION:
+        verdict = "invalid"
+        winner = None
+        pct_c = round(frac_c * 100)
+        pct_t = round(frac_t * 100)
+        label_zh = (
+            f"实验无效：被时限打断的试验对照组 {pct_c}%、实验组 {pct_t}%，"
+            f"超过 {round(MAX_INTERRUPTED_FRACTION * 100)}%；请加长 timeout_sec 后重跑，不排定名次"
+        )
+        label_en = (
+            f"Invalid run: {pct_c}% of control and {pct_t}% of treatment trials hit the time limit "
+            f"(> {round(MAX_INTERRUPTED_FRACTION * 100)}%); raise timeout_sec and rerun; no rank assigned"
+        )
     elif ci_low <= 0.0 <= ci_high:
         verdict = "inconclusive"
         winner = None
@@ -89,11 +169,12 @@ def compute_newcombe_wilson_comparison(
         label_en = "Control statistically outperforms Treatment (95% CI < 0)"
 
     return {
-        "method": "newcombe_wilson_95",
+        "method": "paired_task_t_95",
         "confidence_level": 0.95,
         "min_trials_per_arm": MIN_TRIALS_FOR_RANKING,
         "control_id": control_id,
         "treatment_id": treatment_id,
+        "tasks_paired": n,
         "control_passed": k_c,
         "control_trials": n_c,
         "control_rate": round(p_c, 4),
@@ -101,14 +182,24 @@ def compute_newcombe_wilson_comparison(
         "treatment_trials": n_t,
         "treatment_rate": round(p_t, 4),
         "delta_pass_rate": round(delta, 4),
+        "standard_error": round(se, 4),
+        "se_between_tasks": round(se_between, 4),
+        "se_within_tasks": round(se_within, 4),
+        "degrees_of_freedom": df,
+        "critical_value": round(crit, 4),
         "ci_low": round(ci_low, 4),
         "ci_high": round(ci_high, 4),
+        "min_detectable_effect_80": round(mde, 4),
+        "control_interrupted": int(control_interrupted),
+        "treatment_interrupted": int(treatment_interrupted),
+        "control_interrupted_fraction": round(frac_c, 4),
+        "treatment_interrupted_fraction": round(frac_t, 4),
+        "max_interrupted_fraction": MAX_INTERRUPTED_FRACTION,
         "verdict": verdict,
         "winner": winner,
         "verdict_label_en": label_en,
         "verdict_label_zh": label_zh,
     }
-
 
 class ArenaDatabase:
     """Zero-dependency SQLite WAL store for SkillArena experiments and trajectories."""
@@ -513,13 +604,32 @@ class ArenaDatabase:
             (r for r in leaderboard if r.role == "treatment"),
             leaderboard[1] if len(leaderboard) > 1 else None,
         )
-        stat_comp = compute_newcombe_wilson_comparison(
-            control_id=ctrl_summary.contender_id if ctrl_summary else None,
-            treatment_id=treat_summary.contender_id if treat_summary else None,
-            control_passed=ctrl_summary.trials_passed if ctrl_summary else 0,
-            control_trials=ctrl_summary.trials_total if ctrl_summary else 0,
-            treatment_passed=treat_summary.trials_passed if treat_summary else 0,
-            treatment_trials=treat_summary.trials_total if treat_summary else 0,
+        ctrl_cid_for_stats = ctrl_summary.contender_id if ctrl_summary else None
+        treat_cid_for_stats = treat_summary.contender_id if treat_summary else None
+        ctrl_stat_trials = by_contender.get(ctrl_cid_for_stats or "", [])
+        treat_stat_trials = by_contender.get(treat_cid_for_stats or "", [])
+        ctrl_by_task: dict[str, list[TrialResult]] = defaultdict(list)
+        treat_by_task: dict[str, list[TrialResult]] = defaultdict(list)
+        for t in ctrl_stat_trials:
+            ctrl_by_task[t.task_id].append(t)
+        for t in treat_stat_trials:
+            treat_by_task[t.task_id].append(t)
+        paired_rows = [
+            (
+                sum(1 for r in ctrl_by_task[tid] if r.passed),
+                len(ctrl_by_task[tid]),
+                sum(1 for r in treat_by_task[tid] if r.passed),
+                len(treat_by_task[tid]),
+            )
+            for tid in ctrl_by_task
+            if tid in treat_by_task
+        ]
+        stat_comp = compute_paired_task_comparison(
+            control_id=ctrl_cid_for_stats,
+            treatment_id=treat_cid_for_stats,
+            per_task=paired_rows,
+            control_interrupted=sum(1 for t in ctrl_stat_trials if trial_was_interrupted(t)),
+            treatment_interrupted=sum(1 for t in treat_stat_trials if trial_was_interrupted(t)),
         )
         stat_comp["is_simulated"] = exp_is_simulated
         if exp_is_simulated:
