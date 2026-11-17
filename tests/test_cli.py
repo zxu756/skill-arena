@@ -385,8 +385,8 @@ def test_readmes_have_no_fabricated_images_and_disclose_unreleased_and_limitatio
     assert readme_zh.splitlines()[0].strip() == "# SkillArena"
     assert "(m0/honest)" not in readme_en
     assert "(m0/honest)" not in readme_zh
-    assert "Unreleased" in readme_en and "v0.2.0" in readme_en
-    assert "未发布" in readme_zh and "v0.2.0" in readme_zh
+    assert "since `v0.3.0`" in readme_en and "Unreleased" not in readme_en
+    assert "`v0.3.0` 起" in readme_zh and "未发布" not in readme_zh
 
     # K13: macOS SIP platform binary double-fork + setsid non-guarantee
     assert "SIP" in readme_en and "/bin/sleep" in readme_en and "does not guarantee" in readme_en

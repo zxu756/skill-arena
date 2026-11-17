@@ -306,7 +306,7 @@ def test_full_ab_experiment_db_studio_and_html_export(tmp_path: Path) -> None:
 
 
 def test_version_and_bilingual_lang_resolution() -> None:
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.3.0"
 
     # Explicit CLI flag overrides env and locale
     assert resolve_lang("zh", {"SKILL_ARENA_LANG": "en", "LC_ALL": "en_US.UTF-8"}) == "zh"

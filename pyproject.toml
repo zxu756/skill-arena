@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skill-arena"
-version = "0.2.0"
+version = "0.3.0"
 description = "Controlled git-worktree & isolated-HOME A/B benchmark harness for coding agents and SKILL.md rules via agent-relay, agent-xray streaming metering, Newcombe-Wilson 95% confidence intervals, and deterministic anti-cheat graders."
 readme = "README.md"
 license = { text = "MIT" }
