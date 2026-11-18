@@ -547,6 +547,28 @@ def _print_design_analysis(report: dict, lang: str = "en") -> None:
             cells.append(f"{t_txt} {float(pt.get('pass_rate', 0.0)) * 100:.1f}%")
         print(f"{str(row.get('label', ''))[:40]}: {' | '.join(cells)}")
 
+    print(
+        "\n--- 智能体自写测试质量（变异得分）---" if is_zh else "\n--- Agent-written tests (mutation score) ---"
+    )
+    for row in rows:
+        q = dict(row.get("agent_test_quality") or {})
+        mean = q.get("mean_mutation_score")
+        valid_rate = q.get("valid_rate")
+        mean_txt = f"{float(mean) * 100:.1f}%" if mean is not None else "n/a"
+        valid_txt = f"{float(valid_rate) * 100:.0f}%" if valid_rate is not None else "n/a"
+        if is_zh:
+            print(
+                f"{str(row.get('label', ''))[:40]}: 写了测试 {int(q.get('trials_with_tests', 0))}/{int(q.get('trials', 0))} 次，"
+                f"在参考实现上有效 {valid_txt}，平均变异得分 {mean_txt}"
+                f"（杀死 {int(q.get('mutants_killed', 0))}/{int(q.get('mutants_total', 0))} 个变异体）"
+            )
+        else:
+            print(
+                f"{str(row.get('label', ''))[:40]}: wrote tests in {int(q.get('trials_with_tests', 0))}/{int(q.get('trials', 0))} trials, "
+                f"valid on reference {valid_txt}, mean mutation score {mean_txt} "
+                f"(killed {int(q.get('mutants_killed', 0))}/{int(q.get('mutants_total', 0))} mutants)"
+            )
+
 
 def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument(

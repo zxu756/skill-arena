@@ -18,6 +18,7 @@ import traceback
 import uuid
 
 from skill_arena.graders.deterministic import cap_grader_output, evaluate_sandbox, verify_test_runner_available
+from skill_arena.graders.mutation import score_agent_tests
 from skill_arena.models import (
     ContenderConfig,
     GraderVerdict,
@@ -566,6 +567,16 @@ class HarnessDriver:
                     failure_kind="grader_error",
                 )
                 git_diff = ""
+            if not is_simulated:
+                try:
+                    mscore = score_agent_tests(handle, task)
+                    verdict.agent_tests_files = mscore.files
+                    verdict.agent_tests_valid = mscore.valid
+                    verdict.mutants_killed = mscore.mutants_killed
+                    verdict.mutants_total = mscore.mutants_total
+                    verdict.mutation_note = mscore.note
+                except Exception as exc:  # noqa: BLE001 - test-quality scoring must never fail a trial
+                    verdict.mutation_note = f"mutation scoring failed: {type(exc).__name__}: {exc}"
             verdict.failure_kind = classify_trial_failure(
                 verdict,
                 interrupted=is_interrupted(usage.relay_status, verdict.summary),

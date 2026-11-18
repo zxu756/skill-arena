@@ -373,6 +373,8 @@ class LeaderboardSummary:
     failure_counts: dict[str, int] = field(default_factory=dict)
     # Time-limit curve: [{"t_sec", "pass_rate", "passed_trials", "is_full_limit"}, ...]
     pass_at_time: list[dict[str, Any]] = field(default_factory=list)
+    # Agent-written tests: trials with tests, valid on the reference, mean mutation score.
+    agent_test_quality: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

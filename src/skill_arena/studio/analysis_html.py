@@ -125,8 +125,42 @@ def _time_curve_block(report: dict[str, Any], is_zh: bool) -> str:
     return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
 
 
+def _agent_tests_block(report: dict[str, Any], is_zh: bool) -> str:
+    rows = list(report.get("leaderboard") or [])
+    headers = (
+        ["参赛组别", "写了测试的试验", "在参考实现上有效", "平均变异得分", "杀死变异体"]
+        if is_zh
+        else ["Arm", "Trials with own tests", "Valid on reference", "Mean mutation score", "Mutants killed"]
+    )
+    body = []
+    for row in rows:
+        q = dict(row.get("agent_test_quality") or {})
+        body.append(
+            [
+                _arm_name(row, is_zh),
+                f"{int(q.get('trials_with_tests', 0))}/{int(q.get('trials', 0))}",
+                _pct(q.get("valid_rate")),
+                _pct(q.get("mean_mutation_score")),
+                f"{int(q.get('mutants_killed', 0))}/{int(q.get('mutants_total', 0))}",
+            ]
+        )
+    title = "智能体自写测试质量（变异得分）" if is_zh else "Agent-written tests (mutation score)"
+    foot = (
+        "智能体新增的测试先在参考实现上运行（失败即无效），再在每个变异体上运行；测试失败即杀死该变异体。"
+        if is_zh
+        else "The agent's new tests run against the reference solution (failing there makes them invalid) "
+        "and against every mutant; a mutant is killed when the tests fail on it."
+    )
+    return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
+
+
 def _blocks(report: dict[str, Any], is_zh: bool) -> list[str]:
-    return [_comparisons_block(report, is_zh), _failure_block(report, is_zh), _time_curve_block(report, is_zh)]
+    return [
+        _comparisons_block(report, is_zh),
+        _failure_block(report, is_zh),
+        _time_curve_block(report, is_zh),
+        _agent_tests_block(report, is_zh),
+    ]
 
 
 def render_design_analysis(report: dict[str, Any], render_lang: str) -> str:

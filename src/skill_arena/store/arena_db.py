@@ -307,6 +307,26 @@ def compare_arms(
 PASS_AT_TIME_GRID_SEC: tuple[int, ...] = (60, 120, 180, 300, 600, 900)
 
 
+def summarize_agent_test_quality(trials: list[TrialResult]) -> dict[str, Any]:
+    """Per-arm summary of the agent's own tests (mutation score averaged over trials with valid tests)."""
+    with_tests = [t for t in trials if t.verdict.agent_tests_files]
+    scored = [t for t in with_tests if t.verdict.agent_tests_valid is not None]
+    valid = [t for t in scored if t.verdict.agent_tests_valid]
+    with_mutants = [t for t in valid if t.verdict.mutants_total and t.verdict.mutants_killed is not None]
+    scores = [float(t.verdict.mutants_killed or 0) / float(t.verdict.mutants_total or 1) for t in with_mutants]
+    return {
+        "trials": len(trials),
+        "trials_with_tests": len(with_tests),
+        "trials_scored": len(scored),
+        "trials_valid": len(valid),
+        "valid_rate": round(len(valid) / len(scored), 4) if scored else None,
+        "trials_with_mutants": len(with_mutants),
+        "mean_mutation_score": round(sum(scores) / len(scores), 4) if scores else None,
+        "mutants_killed": sum(int(t.verdict.mutants_killed or 0) for t in with_mutants),
+        "mutants_total": sum(int(t.verdict.mutants_total or 0) for t in with_mutants),
+    }
+
+
 def trial_agent_seconds(trial: TrialResult) -> float:
     """Agent wall time in seconds (falls back to the recorded latency for rows without it)."""
     ms = trial.agent_wall_ms if trial.agent_wall_ms is not None else trial.usage.total_latency_ms
@@ -773,6 +793,7 @@ class ArenaDatabase:
                     relay_cost_usd=total_relay_spend,
                     failure_counts=failure_counts,
                     pass_at_time=compute_pass_at_time(c_trials)[0],
+                    agent_test_quality=summarize_agent_test_quality(c_trials),
                 )
             )
 
