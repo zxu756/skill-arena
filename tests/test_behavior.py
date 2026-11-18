@@ -162,3 +162,17 @@ def test_behavior_is_none_for_clis_without_tool_calls_and_report_summarizes(
     assert all(t["behavior"]["test_runs"] is None for t in sim["trials"])
     assert all(r["behavior_summary"]["mean_test_runs"] is None for r in sim["leaderboard"])
     assert "not observable (unavailable: simulated trial)" in sim_out
+
+
+def test_vibe_builtin_skill_tool_counts_as_skill_loaded(tmp_path: Path) -> None:
+    """vibe loads skills with its own `skill` tool (input {"name": ...}), not by reading SKILL.md."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    calls_path = tmp_path / "messages.json"
+    calls_path.write_text(json.dumps([_effect("skill", name="test-driven-development")]), encoding="utf-8")
+    calls = load_vibe_tool_calls(calls_path)
+    assert calls is not None
+    got = behavior_from_tool_calls(calls, ws, skill_names=["test-driven-development"])
+    assert got["skill_loaded"] is True
+    other = behavior_from_tool_calls(calls, ws, skill_names=["careful-implementation"])
+    assert other["skill_loaded"] is False

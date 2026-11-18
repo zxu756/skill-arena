@@ -66,6 +66,7 @@ def load_vibe_tool_calls(messages_path: Path) -> list[dict[str, Any]] | None:
             {
                 "tool": tool,
                 "command": str(inp.get("command") or ""),
+                "name": str(inp.get("name") or ""),
                 "path": str(inp.get("filePath") or inp.get("path") or ""),
                 "denied": bool(denied),
                 "created_at": entry.get("createdAt"),
@@ -97,6 +98,10 @@ def behavior_from_tool_calls(
             if _TEST_RUN_RE.search(cmd) or (test_cmd and test_cmd in cmd):
                 test_runs += 1
             if "SKILL.md" in cmd and any(name in cmd for name in skill_names):
+                skill_loaded = True
+        elif short == "skill":
+            # vibe's built-in skill tool: {"toolName": "skill", "input": {"name": "<skill>"}}
+            if str(call.get("name", "")) in skill_names:
                 skill_loaded = True
         elif short in {"read_file", "read"}:
             if path.endswith("SKILL.md") and any(f"/{name}/" in path for name in skill_names):

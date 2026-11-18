@@ -209,7 +209,7 @@ def test_missing_pytest_in_grading_python_fails_preflight_immediately(
 
 @pytest.mark.parametrize(
     "new_test_rel_path",
-    ["tests/test_agent_written_extra.py", "tests/unit/test_agent_nested.py"],
+    ["tests/test_agent_written_extra.py", "tests/unit/test_agent_nested.py", "test_root_level.py"],
 )
 def test_agent_may_add_new_test_files_without_anti_cheat_violation(
     tmp_path: Path,
@@ -248,6 +248,7 @@ def test_new_agent_test_file_cannot_rescue_a_wrong_solution(tmp_path: Path) -> N
             encoding="utf-8",
         )
         (handle.root / "tests" / "test_zz_exit.py").write_text("import os\nos._exit(0)\n", encoding="utf-8")
+        (handle.root / "test_zz_root_exit.py").write_text("import os\nos._exit(0)\n", encoding="utf-8")
 
         verdict, _ = evaluate_sandbox(handle, task)
         assert not verdict.passed
@@ -258,7 +259,7 @@ def test_new_agent_test_file_cannot_rescue_a_wrong_solution(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     "still_forbidden",
-    ["tests/conftest.py", "tests/__init__.py", "tests/helper_extra.py", "tests/unittest.py", "test_root_level.py"],
+    ["tests/conftest.py", "tests/__init__.py", "tests/helper_extra.py", "tests/unittest.py", "conftest.py", "pkg/test_nested_outside_tests.py"],
 )
 def test_new_files_under_tests_that_are_not_plain_test_modules_stay_forbidden(
     tmp_path: Path,

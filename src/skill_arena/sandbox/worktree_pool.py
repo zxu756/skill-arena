@@ -89,7 +89,9 @@ def is_forbidden_agent_path(rel_path: str, protected_paths: set[str]) -> bool:
     return False
 
 
-_NEW_AGENT_TEST_FILE_RE = re.compile(r"^tests?/(?:[A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_]+\.py$")
+# A plain test module at the repository root or anywhere under tests/ (agents doing TDD put
+# their own tests in either place). Such files never enter the clean grading checkout.
+_NEW_AGENT_TEST_FILE_RE = re.compile(r"^(?:tests?/(?:[A-Za-z0-9_.-]+/)*)?test_[A-Za-z0-9_]+\.py$")
 
 
 def is_permitted_new_agent_test_file(rel_path: str, protected_paths: set[str]) -> bool:
