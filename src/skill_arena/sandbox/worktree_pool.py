@@ -303,6 +303,8 @@ class SandboxHandle:
     protected_hashes: dict[str, str | None]
     protected_backups: dict[str, bytes | None]
     baseline_files: dict[str, bytes] = field(default_factory=dict)
+    # Hidden grading tests: never in the agent's workspace, overlaid onto the clean grading checkout.
+    hidden_test_files: dict[str, bytes] = field(default_factory=dict)
 
     def verify_and_restore_protected_tests(self) -> tuple[bool, list[str]]:
         """Check protected tests and forbidden paths (tests/, __init__.py, stdlib shadows), restoring workspace."""
@@ -350,6 +352,9 @@ class SandboxHandle:
             if base_bytes is None and is_permitted_new_agent_test_file(rel_path, protected_set):
                 # New agent-written test module: allowed, but never copied into the grading checkout.
                 continue
+            if base_bytes is None and rel_path in self.hidden_test_files:
+                # The agent wrote a file where a hidden test will go: the grader overwrites it, so it is not tampering.
+                continue
             if is_forbidden_agent_path(rel_path, protected_set):
                 _mark(rel_path)
                 target = self.root / rel_path
@@ -392,6 +397,14 @@ class SandboxHandle:
                 victim = dest_dir / rel_path
                 if victim.is_file():
                     victim.unlink()
+
+        # Hidden tests go in last so nothing the agent wrote at those paths survives.
+        for rel_path, raw_bytes in self.hidden_test_files.items():
+            out_file = dest_dir / rel_path
+            if out_file.is_symlink():
+                out_file.unlink()
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_bytes(raw_bytes)
 
     def capture_git_diff(self) -> tuple[str, int, int]:
         """Return unified git diff against baseline HEAD plus added/removed line counts."""
@@ -516,6 +529,7 @@ class WorktreeSandboxPool:
             protected_hashes=protected_hashes,
             protected_backups=protected_backups,
             baseline_files=baseline_files,
+            hidden_test_files={k: v.encode("utf-8") for k, v in task.hidden_test_files.items()},
         )
 
     def release(self, handle: SandboxHandle) -> None:

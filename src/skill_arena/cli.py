@@ -32,6 +32,7 @@ from skill_arena.store.arena_db import ArenaDatabase
 from skill_arena.studio.server import create_studio_server
 from skill_arena.studio.templates import render_arena_html
 from skill_arena.suites.builtin_tasks import load_builtin_suite
+from skill_arena.suites.pool_import import POOL_VARIANTS, export_pool
 
 EXIT_BUDGET_EXCEEDED = 3
 
@@ -482,6 +483,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_ext.add_argument("--test-cmd", default=None, help="Explicit test command override.")
     p_ext.add_argument("--out", default=None, help="Optional path to save extracted TaskSpec JSON.")
 
+    p_pool = sub.add_parser(
+        "pool-export",
+        help="Convert a task pool directory (task.json, start/, tests/, reference/, mutants/) into TaskSpec JSON.",
+    )
+    _add_subparser_lang_arg(p_pool)
+    p_pool.add_argument("--pool", required=True, help="Pool directory holding one sub-directory per task.")
+    p_pool.add_argument(
+        "--variant",
+        action="append",
+        choices=[*POOL_VARIANTS, "both"],
+        default=None,
+        help="visible (tests in the workspace) or hidden (tests only at grading time); repeatable, or 'both'.",
+    )
+    p_pool.add_argument("--task", action="append", default=[], metavar="ID", help="Only export these task ids.")
+    p_pool.add_argument("--timeout-sec", type=int, default=None, help="Per-task agent time limit (default 900).")
+    p_pool.add_argument("--out", required=True, help="Destination suite JSON (a list of TaskSpecs).")
+
     p_studio = sub.add_parser("studio", help="Start interactive SkillArena Web Studio.")
     _add_subparser_lang_arg(p_studio)
     p_studio.add_argument("--db", default=".skill-arena/arena.sqlite", help="SQLite database path.")
@@ -712,6 +730,38 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Extracted TaskSpec {spec.task_id} -> {out_path}")
         else:
             print(rendered)
+        return 0
+
+    if args.command == "pool-export":
+        raw_variants = args.variant or ["visible"]
+        variants: list[str] = []
+        for v in raw_variants:
+            for item in (POOL_VARIANTS if v == "both" else (v,)):
+                if item not in variants:
+                    variants.append(item)
+        if args.timeout_sec is not None and int(args.timeout_sec) <= 0:
+            print(
+                "错误：`--timeout-sec` 必须大于 0。" if is_zh else "Error: `--timeout-sec` must be positive.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            specs = export_pool(
+                Path(args.pool),
+                variants,
+                task_ids=list(args.task) or None,
+                timeout_sec=args.timeout_sec,
+            )
+        except (ValueError, OSError, UnicodeDecodeError) as exc:
+            print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
+            return 2
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps([s.to_dict() for s in specs], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if is_zh:
+            print(f"已导出 {len(specs)} 道题（{', '.join(variants)}）-> {out_path}")
+        else:
+            print(f"Exported {len(specs)} TaskSpecs ({', '.join(variants)}) -> {out_path}")
         return 0
 
     if args.command == "studio":

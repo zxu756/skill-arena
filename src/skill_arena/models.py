@@ -25,6 +25,12 @@ class TaskSpec:
     frontend_target_html: str | None = None
     max_diff_lines: int = 120
     timeout_sec: int = 900
+    # "visible" (tests in the workspace), "hidden" (tests only at grading time) or "" (legacy tasks).
+    variant: str = ""
+    # Test files overlaid onto the clean grading checkout only; never placed in the agent's workspace.
+    hidden_test_files: dict[str, str] = field(default_factory=dict)
+    # Plausible-but-wrong implementations (each a {path: content} overlay) used to score agent-written tests.
+    mutant_files: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -47,6 +53,11 @@ class TaskSpec:
             frontend_target_html=payload.get("frontend_target_html"),
             max_diff_lines=int(payload.get("max_diff_lines", 120)),
             timeout_sec=int(payload.get("timeout_sec", 900)),
+            variant=str(payload.get("variant") or ""),
+            hidden_test_files={str(k): str(v) for k, v in dict(payload.get("hidden_test_files") or {}).items()},
+            mutant_files=[
+                {str(k): str(v) for k, v in dict(m).items()} for m in list(payload.get("mutant_files") or [])
+            ],
         )
 
 
@@ -217,7 +228,18 @@ class GraderVerdict:
     sloplint_fails: int = 0
     sloplint_warns: int = 0
     summary: str = ""
+    # Complete grader output (test stdout/stderr plus craft findings), capped at GRADER_OUTPUT_CAP bytes.
     stdout_tail: str = ""
+    # passed | wrong | interrupted | anti_cheat | craft | infra | grader_error ("" for legacy rows)
+    failure_kind: str = ""
+    craft_findings: list[str] = field(default_factory=list)
+    sloplint_source: str = ""
+    # Mutation score of the agent's own new test files (None when not measured).
+    agent_tests_files: list[str] = field(default_factory=list)
+    agent_tests_valid: bool | None = None
+    mutants_killed: int | None = None
+    mutants_total: int | None = None
+    mutation_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -237,6 +259,16 @@ class GraderVerdict:
             sloplint_warns=int(payload.get("sloplint_warns", 0)),
             summary=str(payload.get("summary", "")),
             stdout_tail=str(payload.get("stdout_tail", "")),
+            failure_kind=str(payload.get("failure_kind") or ""),
+            craft_findings=[str(x) for x in payload.get("craft_findings", [])],
+            sloplint_source=str(payload.get("sloplint_source") or ""),
+            agent_tests_files=[str(x) for x in payload.get("agent_tests_files", [])],
+            agent_tests_valid=(
+                bool(payload["agent_tests_valid"]) if payload.get("agent_tests_valid") is not None else None
+            ),
+            mutants_killed=int(payload["mutants_killed"]) if payload.get("mutants_killed") is not None else None,
+            mutants_total=int(payload["mutants_total"]) if payload.get("mutants_total") is not None else None,
+            mutation_note=str(payload.get("mutation_note") or ""),
         )
 
 
@@ -262,6 +294,12 @@ class TrialResult:
     started_at: str
     finished_at: str
     is_simulated: bool = False
+    # Position in the randomized launch order (0-based; -1 when unknown, e.g. legacy rows).
+    launch_index: int = -1
+    # Wall time of the agent run itself (excluding grading), in ms; None when unknown.
+    agent_wall_ms: int | None = None
+    # Trajectory behaviour metrics: test_runs, test_first, skill_loaded (None = not observable).
+    behavior: dict[str, Any] = field(default_factory=dict)
 
     @property
     def leaked_processes(self) -> list[dict[str, Any]]:
@@ -290,6 +328,10 @@ class TrialResult:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "is_simulated": self.is_simulated,
+            "launch_index": self.launch_index,
+            "agent_wall_ms": self.agent_wall_ms,
+            "behavior": dict(self.behavior),
+            "failure_kind": self.verdict.failure_kind,
         }
 
 
