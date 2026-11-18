@@ -298,6 +298,8 @@ class TrialResult:
     launch_index: int = -1
     # Wall time of the agent run itself (excluding grading), in ms; None when unknown.
     agent_wall_ms: int | None = None
+    # The task's agent time limit when the trial ran (for the time-limit curve).
+    task_timeout_sec: int | None = None
     # Trajectory behaviour metrics: test_runs, test_first, skill_loaded (None = not observable).
     behavior: dict[str, Any] = field(default_factory=dict)
 
@@ -330,6 +332,7 @@ class TrialResult:
             "is_simulated": self.is_simulated,
             "launch_index": self.launch_index,
             "agent_wall_ms": self.agent_wall_ms,
+            "task_timeout_sec": self.task_timeout_sec,
             "behavior": dict(self.behavior),
             "failure_kind": self.verdict.failure_kind,
         }
@@ -368,6 +371,8 @@ class LeaderboardSummary:
     relay_cost_usd: float | None = None
     # Trials per failure category (passed, wrong, interrupted, anti_cheat, craft, infra, grader_error).
     failure_counts: dict[str, int] = field(default_factory=dict)
+    # Time-limit curve: [{"t_sec", "pass_rate", "passed_trials", "is_full_limit"}, ...]
+    pass_at_time: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

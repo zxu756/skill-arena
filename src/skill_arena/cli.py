@@ -131,7 +131,6 @@ def run_ab_experiment(
     pass_env: list[str] | tuple[str, ...] | None = None,
     seed: int = DEFAULT_SCHEDULE_SEED,
     workers: int = 1,
-    tell_agent_time_limit: bool = True,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
     workers = max(1, int(workers))
@@ -152,7 +151,6 @@ def run_ab_experiment(
             "seed": int(seed),
             "workers": workers,
             "schedule": "blocked-randomized",
-            "tell_agent_time_limit": bool(tell_agent_time_limit),
         },
     )
 
@@ -172,7 +170,6 @@ def run_ab_experiment(
         relay_script=relay_script,
         budget_usd=budget_usd,
         pass_env=pass_env,
-        tell_agent_time_limit=tell_agent_time_limit,
     )
 
     def _announce_budget_stop() -> None:
@@ -533,6 +530,22 @@ def _print_design_analysis(report: dict, lang: str = "en") -> None:
         ]
         label = str(row.get("label", ""))[:40]
         print(f"{label}: {', '.join(parts) if parts else ('无试验' if is_zh else 'no trials')}")
+
+    print(
+        "\n--- 时限曲线 Pass@T（通过且在 T 秒内结束）---"
+        if is_zh
+        else "\n--- Time-limit curve Pass@T (passed and agent finished within T seconds) ---"
+    )
+    for row in rows:
+        curve = list(row.get("pass_at_time") or [])
+        cells = []
+        for pt in curve:
+            t_sec = pt.get("t_sec")
+            t_txt = (f"{t_sec}s" if t_sec is not None else ("时限" if is_zh else "limit"))
+            if pt.get("is_full_limit") and t_sec is not None:
+                t_txt += "（时限）" if is_zh else " (limit)"
+            cells.append(f"{t_txt} {float(pt.get('pass_rate', 0.0)) * 100:.1f}%")
+        print(f"{str(row.get('label', ''))[:40]}: {' | '.join(cells)}")
 
 
 def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:

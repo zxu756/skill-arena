@@ -304,6 +304,55 @@ def compare_arms(
     return comp
 
 
+PASS_AT_TIME_GRID_SEC: tuple[int, ...] = (60, 120, 180, 300, 600, 900)
+
+
+def trial_agent_seconds(trial: TrialResult) -> float:
+    """Agent wall time in seconds (falls back to the recorded latency for rows without it)."""
+    ms = trial.agent_wall_ms if trial.agent_wall_ms is not None else trial.usage.total_latency_ms
+    return max(0.0, float(ms or 0) / 1000.0)
+
+
+def compute_pass_at_time(
+    trials: list[TrialResult],
+    grid_sec: tuple[int, ...] = PASS_AT_TIME_GRID_SEC,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Pass@T: share of trials that passed AND whose agent finished within T seconds.
+
+    Like Pass@1 it is averaged per task first, then across tasks. Grid points above the time limit
+    are dropped; the time limit itself (the largest ``task_timeout_sec`` seen) is always included and
+    equals Pass@1 there, since a trial stopped by the limit cannot pass.
+    """
+    by_task: dict[str, list[TrialResult]] = defaultdict(list)
+    for t in trials:
+        by_task[t.task_id].append(t)
+    limits = [int(t.task_timeout_sec) for t in trials if t.task_timeout_sec]
+    full_limit = max(limits) if limits else None
+    points: list[int | None] = [g for g in grid_sec if full_limit is None or g < full_limit]
+    points.append(full_limit)
+    curve: list[dict[str, Any]] = []
+    for t_sec in points:
+        def _ok(tr: TrialResult) -> bool:
+            if not tr.passed:
+                return False
+            return t_sec is None or trial_agent_seconds(tr) <= float(t_sec) + 1e-9
+
+        rate = (
+            sum(sum(1 for tr in lst if _ok(tr)) / len(lst) for lst in by_task.values()) / len(by_task)
+            if by_task
+            else 0.0
+        )
+        curve.append(
+            {
+                "t_sec": t_sec,
+                "pass_rate": round(rate, 4),
+                "passed_trials": sum(1 for tr in trials if _ok(tr)),
+                "is_full_limit": t_sec == full_limit,
+            }
+        )
+    return curve, full_limit
+
+
 class ArenaDatabase:
     """Zero-dependency SQLite WAL store for SkillArena experiments and trajectories."""
 
@@ -491,6 +540,7 @@ class ArenaDatabase:
                         {
                             "launch_index": trial.launch_index,
                             "agent_wall_ms": trial.agent_wall_ms,
+                            "task_timeout_sec": trial.task_timeout_sec,
                             "behavior": trial.behavior,
                         }
                     ),
@@ -547,6 +597,9 @@ class ArenaDatabase:
                     is_simulated=is_sim,
                     launch_index=int(meta.get("launch_index", -1)),
                     agent_wall_ms=int(meta["agent_wall_ms"]) if meta.get("agent_wall_ms") is not None else None,
+                    task_timeout_sec=(
+                        int(meta["task_timeout_sec"]) if meta.get("task_timeout_sec") is not None else None
+                    ),
                     behavior=dict(meta.get("behavior") or {}),
                 )
             )
@@ -719,6 +772,7 @@ class ArenaDatabase:
                     total_relay_cost_usd=total_relay_spend,
                     relay_cost_usd=total_relay_spend,
                     failure_counts=failure_counts,
+                    pass_at_time=compute_pass_at_time(c_trials)[0],
                 )
             )
 

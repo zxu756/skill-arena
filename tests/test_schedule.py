@@ -61,7 +61,7 @@ def test_simulated_run_records_launch_order_matching_the_schedule(tmp_path: Path
     report = ArenaDatabase(db_path).build_comparison_report(ArenaDatabase(db_path).latest_experiment_id())
     trials = report["trials"]
     assert sorted(t["launch_index"] for t in trials) == list(range(len(trials)))
-    assert report["design"] == {"seed": 5, "workers": 3, "schedule": "blocked-randomized", "tell_agent_time_limit": True}
+    assert report["design"] == {"seed": 5, "workers": 3, "schedule": "blocked-randomized"}
     tasks = load_builtin_suite(category="concurrency")
     contenders = [ContenderConfig.from_dict(c) for c in report["contenders"]]
     expected = [(t.task_id, c.contender_id, r) for t, c, r in build_trial_schedule(tasks, contenders, 2, seed=5)]

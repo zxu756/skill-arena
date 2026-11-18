@@ -427,10 +427,8 @@ class HarnessDriver:
         relay_script: str | Path | None = None,
         budget_usd: float | None = None,
         pass_env: list[str] | tuple[str, ...] | None = None,
-        tell_agent_time_limit: bool = True,
     ) -> None:
         self.pool = pool
-        self.tell_agent_time_limit = bool(tell_agent_time_limit)
         # Trials may run on several threads; spend and trial counters are only touched under this lock.
         self._accounting_lock = threading.Lock()
         self.upstream_api_url = upstream_api_url
@@ -614,6 +612,7 @@ class HarnessDriver:
                 is_simulated=is_simulated,
                 launch_index=int(launch_index),
                 agent_wall_ms=run_info.wall_ms,
+                task_timeout_sec=int(task.timeout_sec),
             )
         finally:
             self.pool.release(handle)

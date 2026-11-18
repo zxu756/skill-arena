@@ -98,8 +98,35 @@ def _comparisons_block(report: dict[str, Any], is_zh: bool) -> str:
     return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
 
 
+def _time_curve_block(report: dict[str, Any], is_zh: bool) -> str:
+    rows = list(report.get("leaderboard") or [])
+    curves = [list(r.get("pass_at_time") or []) for r in rows]
+    if not any(curves):
+        return ""
+    longest = max(curves, key=len)
+    headers = ["参赛组别" if is_zh else "Arm"]
+    for pt in longest:
+        t_sec = pt.get("t_sec")
+        txt = f"{t_sec}s" if t_sec is not None else ("时限" if is_zh else "limit")
+        if pt.get("is_full_limit") and t_sec is not None:
+            txt += "（时限）" if is_zh else " (limit)"
+        headers.append(f"Pass@{txt}")
+    body = []
+    for row, curve in zip(rows, curves):
+        by_t = {pt.get("t_sec"): pt for pt in curve}
+        body.append([_arm_name(row, is_zh)] + [_pct(by_t[pt.get("t_sec")]["pass_rate"]) if pt.get("t_sec") in by_t else "n/a" for pt in longest])
+    title = "时限曲线 Pass@T" if is_zh else "Time-limit curve Pass@T"
+    foot = (
+        "只有通过且智能体在 T 秒内结束的试验才算在 T 时通过；曲线在时限前已经变平，说明时限够用。"
+        if is_zh
+        else "A trial counts at T only if it passed and the agent finished within T seconds; "
+        "a curve that is flat well before the limit means the limit was long enough."
+    )
+    return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
+
+
 def _blocks(report: dict[str, Any], is_zh: bool) -> list[str]:
-    return [_comparisons_block(report, is_zh), _failure_block(report, is_zh)]
+    return [_comparisons_block(report, is_zh), _failure_block(report, is_zh), _time_curve_block(report, is_zh)]
 
 
 def render_design_analysis(report: dict[str, Any], render_lang: str) -> str:
