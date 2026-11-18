@@ -9,7 +9,9 @@ killed when the agent's tests fail on it. None of this changes whether the trial
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,7 +50,15 @@ def collect_agent_test_files(handle: SandboxHandle) -> dict[str, bytes]:
     }
 
 
-def _python3() -> str:
+def task_python(test_command: str = "") -> str:
+    """The interpreter the task's own test_command uses (e.g. ``python3.12``), else ``python3``."""
+    try:
+        argv = shlex.split(test_command)
+    except ValueError:
+        argv = []
+    if argv and os.path.basename(argv[0]).startswith("python"):
+        exe = argv[0]
+        return exe if os.path.sep in exe else (shutil.which(exe) or exe)
     return shutil.which("python3") or sys.executable
 
 
@@ -66,9 +76,9 @@ def _pytest_available(python: str) -> bool:
     return cached
 
 
-def agent_test_command(test_files: list[str]) -> list[str]:
-    """pytest when the grading python has it (it also runs unittest classes), else unittest."""
-    python = _python3()
+def agent_test_command(test_files: list[str], test_command: str = "") -> list[str]:
+    """pytest when the task's python has it (it also runs unittest classes), else unittest."""
+    python = task_python(test_command)
     if _pytest_available(python):
         return [python, "-m", "pytest", "-q", "-p", "no:cacheprovider", *test_files]
     return [python, "-m", "unittest", *test_files]
@@ -113,7 +123,7 @@ def score_agent_tests(handle: SandboxHandle, task: TaskSpec, *, timeout_sec: int
         return score
 
     limit = int(timeout_sec or min(MUTATION_RUN_TIMEOUT_SEC, max(5, int(task.timeout_sec))))
-    argv = agent_test_command(sorted(agent_tests))
+    argv = agent_test_command(sorted(agent_tests), task.test_command)
     runner = "pytest" if "pytest" in argv else "unittest"
     baseline = {rel: data for rel, data in handle.baseline_files.items() if rel not in {"AGENTS.md", "CLAUDE.md"}}
     reference = {rel: src.encode("utf-8") for rel, src in task.reference_solution_files.items()}

@@ -143,3 +143,20 @@ def test_driver_stores_mutation_score_and_report_averages_it(
     assert quality["arm_tdd"]["mean_mutation_score"] == 1.0
     assert quality["arm_tdd"]["valid_rate"] == 1.0
     assert "Agent-written tests (mutation score)" in out and "mean mutation score 100.0%" in out
+
+
+def test_agent_tests_use_the_task_interpreter(tmp_path: Path) -> None:
+    from skill_arena.graders.mutation import agent_test_command, task_python
+
+    fake = tmp_path / "python3.99"
+    fake.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake.chmod(0o755)
+    assert task_python(f"{fake} -m unittest tests/test_calc.py") == str(fake)
+    argv = agent_test_command(["tests/test_mine.py"], f"{fake} -m unittest tests/test_calc.py")
+    assert argv[0] == str(fake) and argv[-1] == "tests/test_mine.py"
+    # A task run with an interpreter that fails everything makes the agent's tests invalid.
+    def _broken(task: TaskSpec) -> None:
+        task.test_command = f"{fake} -m unittest tests/test_calc.py"
+
+    score, _ = _score(tmp_path / "s", {"tests/test_mine.py": ADD_ONLY_TEST}, task_edit=_broken)
+    assert score.valid is False
