@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import traceback
+from typing import Any
 import uuid
 
 from skill_arena.graders.deterministic import cap_grader_output, evaluate_sandbox, verify_test_runner_available
@@ -28,6 +29,12 @@ from skill_arena.models import (
     TrialResult,
 )
 from skill_arena.outcomes import classify_trial_failure, is_interrupted
+from skill_arena.runners.trajectory import (
+    UNAVAILABLE_BEHAVIOR,
+    behavior_from_tool_calls,
+    load_vibe_tool_calls,
+    tool_call_steps,
+)
 from skill_arena.runners.xray_bridge import XRayMeteringBridge
 from skill_arena.sandbox.skill_injector import SkillInjector, SkillMountReport
 from skill_arena.sandbox.worktree_pool import BoundedCommandOutcome, SandboxHandle, WorktreeSandboxPool
@@ -63,6 +70,8 @@ class RelayStepRecord:
     final_message: str = ""
     log_md_found: bool = False
     raw_log_tail: str = ""
+    # Ordered tool calls when the CLI's output records them (vibe's messages.json); None otherwise.
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +83,7 @@ class AgentRunInfo:
     final_message: str = ""
     agent_texts: tuple[str, ...] = ()
     changed_files: list[str] = field(default_factory=list)
+    behavior: dict[str, Any] = field(default_factory=dict)
 
 
 def _real_account_home() -> Path:
@@ -347,6 +357,9 @@ def parse_relay_artifacts(workdir: Path) -> RelayStepRecord:
         if out_path.is_file():
             rec.final_message = out_path.read_text(encoding="utf-8", errors="replace").strip()
 
+        vibe_messages = relay_dir / f"{rec.step_id}.vibe" / "messages.json"
+        if vibe_messages.is_file():
+            rec.tool_calls = load_vibe_tool_calls(vibe_messages)
         vibe_export = relay_dir / f"{rec.step_id}.vibe" / "export.json"
         if vibe_export.is_file():
             try:
@@ -521,7 +534,10 @@ class HarnessDriver:
             exec_outcome: BoundedCommandOutcome | None = None
             if is_simulated:
                 usage, steps = self._execute_simulated_contender(handle, task, contender, mount_report, rep_index)
-                run_info = AgentRunInfo(wall_ms=int(usage.total_latency_ms))
+                run_info = AgentRunInfo(
+                    wall_ms=int(usage.total_latency_ms),
+                    behavior={**UNAVAILABLE_BEHAVIOR, "source": "unavailable: simulated trial"},
+                )
             else:
                 with self._accounting_lock:
                     remaining_budget = (
@@ -624,6 +640,7 @@ class HarnessDriver:
                 launch_index=int(launch_index),
                 agent_wall_ms=run_info.wall_ms,
                 task_timeout_sec=int(task.timeout_sec),
+                behavior=dict(run_info.behavior),
             )
         finally:
             self.pool.release(handle)
@@ -746,6 +763,19 @@ class HarnessDriver:
                         cost_usd=rec.cost_usd or 0.0,
                     )
                 )
+            if relay_rec.tool_calls is not None:
+                behavior = behavior_from_tool_calls(
+                    relay_rec.tool_calls,
+                    handle.root,
+                    skill_names=list(mount_report.mounted_skill_names),
+                    test_command=task.test_command,
+                )
+                steps.extend(tool_call_steps(relay_rec.tool_calls, start_index=len(steps) + 1))
+            else:
+                behavior = {
+                    **UNAVAILABLE_BEHAVIOR,
+                    "source": f"unavailable: {base_cli} output through agent-relay records no tool calls",
+                }
             tail = (relay_rec.final_message or stdout or stderr or "").strip()[-900:]
             reap_suffix = ""
             if outcome.reaped_descendant_pids:
@@ -772,6 +802,7 @@ class HarnessDriver:
                 final_message=relay_rec.final_message,
                 agent_texts=(stderr[-20_000:], stdout[-20_000:], relay_rec.raw_log_tail),
                 changed_files=list(relay_rec.changed_files),
+                behavior=behavior,
             )
             return usage, steps, outcome, run_info
         finally:

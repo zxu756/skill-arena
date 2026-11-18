@@ -154,12 +154,42 @@ def _agent_tests_block(report: dict[str, Any], is_zh: bool) -> str:
     return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
 
 
+def _behavior_block(report: dict[str, Any], is_zh: bool) -> str:
+    rows = list(report.get("leaderboard") or [])
+    headers = (
+        ["参赛组别", "可观测试验", "平均跑测试次数", "先写测试", "读了 SKILL.md"]
+        if is_zh
+        else ["Arm", "Observable trials", "Mean test runs", "Test first", "Read SKILL.md"]
+    )
+    body = []
+    for row in rows:
+        b = dict(row.get("behavior_summary") or {})
+        runs = b.get("mean_test_runs")
+        body.append(
+            [
+                _arm_name(row, is_zh),
+                f"{int(b.get('trials_observed', 0))}/{int(b.get('trials', 0))}",
+                "n/a" if runs is None else f"{float(runs):.1f}",
+                _pct(b.get("test_first_rate")),
+                _pct(b.get("skill_loaded_rate")),
+            ]
+        )
+    title = "行为指标（来自工具调用记录）" if is_zh else "Behaviour (from the agent's tool calls)"
+    foot = (
+        "只有 Mistral Vibe 经 agent-relay 运行时会留下工具调用记录（messages.json）；其他 CLI 显示 n/a。"
+        if is_zh
+        else "Only Mistral Vibe runs through agent-relay keep their tool calls (messages.json); other CLIs show n/a."
+    )
+    return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
+
+
 def _blocks(report: dict[str, Any], is_zh: bool) -> list[str]:
     return [
         _comparisons_block(report, is_zh),
         _failure_block(report, is_zh),
         _time_curve_block(report, is_zh),
         _agent_tests_block(report, is_zh),
+        _behavior_block(report, is_zh),
     ]
 
 

@@ -569,6 +569,30 @@ def _print_design_analysis(report: dict, lang: str = "en") -> None:
                 f"(killed {int(q.get('mutants_killed', 0))}/{int(q.get('mutants_total', 0))} mutants)"
             )
 
+    print("\n--- 行为指标（来自工具调用记录）---" if is_zh else "\n--- Behaviour (from the agent's tool calls) ---")
+    for row in rows:
+        b = dict(row.get("behavior_summary") or {})
+        lbl = str(row.get("label", ""))[:40]
+        if not b.get("trials_observed"):
+            src = "; ".join(b.get("sources") or []) or "n/a"
+            print(f"{lbl}: {'无法观测' if is_zh else 'not observable'} ({src})")
+            continue
+        runs = b.get("mean_test_runs")
+        tf = b.get("test_first_rate")
+        sl = b.get("skill_loaded_rate")
+        tf_txt = f"{float(tf) * 100:.0f}%" if tf is not None else "n/a"
+        sl_txt = f"{float(sl) * 100:.0f}%" if sl is not None else "n/a"
+        if is_zh:
+            print(
+                f"{lbl}: 平均跑测试 {float(runs):.1f} 次，先写测试 {tf_txt}，读了 SKILL.md {sl_txt}"
+                f"（{int(b.get('trials_observed', 0))}/{int(b.get('trials', 0))} 次试验可观测）"
+            )
+        else:
+            print(
+                f"{lbl}: mean test runs {float(runs):.1f}, test first {tf_txt}, read SKILL.md {sl_txt} "
+                f"({int(b.get('trials_observed', 0))}/{int(b.get('trials', 0))} trials observable)"
+            )
+
 
 def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument(

@@ -375,6 +375,8 @@ class LeaderboardSummary:
     pass_at_time: list[dict[str, Any]] = field(default_factory=list)
     # Agent-written tests: trials with tests, valid on the reference, mean mutation score.
     agent_test_quality: dict[str, Any] = field(default_factory=dict)
+    # Trajectory behaviour: mean test runs, test-first rate, skill-loaded rate (None when not observable).
+    behavior_summary: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

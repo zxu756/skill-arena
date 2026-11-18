@@ -307,6 +307,28 @@ def compare_arms(
 PASS_AT_TIME_GRID_SEC: tuple[int, ...] = (60, 120, 180, 300, 600, 900)
 
 
+def summarize_behavior(trials: list[TrialResult]) -> dict[str, Any]:
+    """Per-arm means of the trajectory behaviour metrics over the trials where they were observable."""
+
+    def _vals(key: str) -> list[Any]:
+        return [t.behavior.get(key) for t in trials if t.behavior.get(key) is not None]
+
+    runs = [int(v) for v in _vals("test_runs")]
+    first = [bool(v) for v in _vals("test_first")]
+    loaded = [bool(v) for v in _vals("skill_loaded")]
+    sources = sorted({str(t.behavior.get("source")) for t in trials if t.behavior.get("source")})
+    return {
+        "trials": len(trials),
+        "trials_observed": len(runs),
+        "mean_test_runs": round(sum(runs) / len(runs), 3) if runs else None,
+        "test_first_rate": round(sum(first) / len(first), 4) if first else None,
+        "test_first_trials": len(first),
+        "skill_loaded_rate": round(sum(loaded) / len(loaded), 4) if loaded else None,
+        "skill_loaded_trials": len(loaded),
+        "sources": sources,
+    }
+
+
 def summarize_agent_test_quality(trials: list[TrialResult]) -> dict[str, Any]:
     """Per-arm summary of the agent's own tests (mutation score averaged over trials with valid tests)."""
     with_tests = [t for t in trials if t.verdict.agent_tests_files]
@@ -794,6 +816,7 @@ class ArenaDatabase:
                     failure_counts=failure_counts,
                     pass_at_time=compute_pass_at_time(c_trials)[0],
                     agent_test_quality=summarize_agent_test_quality(c_trials),
+                    behavior_summary=summarize_behavior(c_trials),
                 )
             )
 
