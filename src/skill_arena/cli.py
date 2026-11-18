@@ -283,6 +283,7 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
                 f"（80% 把握）；被时限打断：对照组 {int_c:.0f}%、实验组 {int_t:.0f}%"
             )
         print("指标说明：胜率Elo = 成对胜率换算的 Elo（双组）；首轮上下文税 = 实验组与对照组首轮输入 Token 均值之差。")
+        _print_design_analysis(report, lang=lang)
         return
 
     if is_sim:
@@ -375,6 +376,35 @@ def _print_comparison_table(report: dict, lang: str = "en") -> None:
         "Metrics: WR Elo = Win-Rate Derived Elo (2-arm); "
         "Turn-1 Tax = Mean Turn-1 input token delta (treatment minus baseline)."
     )
+    _print_design_analysis(report, lang=lang)
+
+
+FAILURE_KIND_ZH = {
+    "passed": "通过",
+    "wrong": "答错",
+    "interrupted": "超时打断",
+    "anti_cheat": "违规",
+    "craft": "工艺不合格",
+    "infra": "环境故障",
+    "grader_error": "判分出错",
+}
+
+
+def _print_design_analysis(report: dict, lang: str = "en") -> None:
+    """Failure categories and the other per-arm experiment-design metrics."""
+    is_zh = lang == "zh"
+    rows = list(report.get("leaderboard") or [])
+    if not rows:
+        return
+    print("\n--- 失败原因（每组试验数）---" if is_zh else "\n--- Failure categories (trials per arm) ---")
+    kinds = list(FAILURE_KIND_ZH)
+    for row in rows:
+        counts = dict(row.get("failure_counts") or {})
+        parts = [
+            f"{FAILURE_KIND_ZH[k] if is_zh else k} {int(counts.get(k, 0))}" for k in kinds if int(counts.get(k, 0))
+        ]
+        label = str(row.get("label", ""))[:40]
+        print(f"{label}: {', '.join(parts) if parts else ('无试验' if is_zh else 'no trials')}")
 
 
 def _add_subparser_lang_arg(subparser: argparse.ArgumentParser) -> None:

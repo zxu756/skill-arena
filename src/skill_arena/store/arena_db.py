@@ -11,6 +11,7 @@ import sqlite3
 import statistics
 from typing import Any
 
+from skill_arena.outcomes import FAILURE_KINDS, effective_failure_kind, is_interrupted
 from skill_arena.models import (
     ContenderConfig,
     GraderVerdict,
@@ -60,10 +61,7 @@ def student_t_975(df: int) -> float:
 
 def trial_was_interrupted(trial: TrialResult) -> bool:
     """True when the agent was stopped by the time limit instead of finishing on its own."""
-    status = (trial.usage.relay_status or "").lower()
-    if any(marker in status for marker in ("timeout", "deadline", "interrupted")):
-        return True
-    return (trial.verdict.summary or "").startswith("AGENT TIMEOUT")
+    return is_interrupted(trial.usage.relay_status, trial.verdict.summary)
 
 
 def compute_paired_task_comparison(
@@ -268,6 +266,7 @@ class ArenaDatabase:
                 "ALTER TABLE experiments ADD COLUMN planned_trials INTEGER;",
                 "ALTER TABLE experiments ADD COLUMN completed_trials INTEGER;",
                 "ALTER TABLE trials ADD COLUMN is_simulated INTEGER NOT NULL DEFAULT 0;",
+                "ALTER TABLE trials ADD COLUMN meta_json TEXT;",
             ):
                 try:
                     conn.execute(alter_sql)
@@ -358,8 +357,8 @@ class ArenaDatabase:
                     trial_id, experiment_id, task_id, task_title, task_category,
                     contender_id, contender_label, contender_role, rep_index,
                     passed, anti_cheat_clean, usage_json, verdict_json, steps_json,
-                    git_diff, started_at, finished_at, is_simulated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    git_diff, started_at, finished_at, is_simulated, meta_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trial.trial_id,
@@ -380,6 +379,13 @@ class ArenaDatabase:
                     trial.started_at,
                     trial.finished_at,
                     1 if sim else 0,
+                    json.dumps(
+                        {
+                            "launch_index": trial.launch_index,
+                            "agent_wall_ms": trial.agent_wall_ms,
+                            "behavior": trial.behavior,
+                        }
+                    ),
                 ),
             )
 
@@ -410,6 +416,7 @@ class ArenaDatabase:
             usage = TokenUsageLedger.from_dict(json.loads(r["usage_json"]))
             row_keys = set(r.keys())
             is_sim = bool(r["is_simulated"]) if "is_simulated" in row_keys else usage.is_simulated
+            meta = json.loads(r["meta_json"]) if "meta_json" in row_keys and r["meta_json"] else {}
             results.append(
                 TrialResult(
                     trial_id=r["trial_id"],
@@ -430,6 +437,9 @@ class ArenaDatabase:
                     started_at=r["started_at"],
                     finished_at=r["finished_at"],
                     is_simulated=is_sim,
+                    launch_index=int(meta.get("launch_index", -1)),
+                    agent_wall_ms=int(meta["agent_wall_ms"]) if meta.get("agent_wall_ms") is not None else None,
+                    behavior=dict(meta.get("behavior") or {}),
                 )
             )
         return results
@@ -567,6 +577,10 @@ class ArenaDatabase:
                 if t.usage.relay_cost_usd is not None
             ]
             total_relay_spend = round(sum(relay_cost_vals), 4) if relay_cost_vals else None
+            failure_counts = {kind: 0 for kind in FAILURE_KINDS}
+            for t in c_trials:
+                kind = effective_failure_kind(t)
+                failure_counts[kind] = failure_counts.get(kind, 0) + 1
             leaderboard.append(
                 LeaderboardSummary(
                     contender_id=c.contender_id,
@@ -596,6 +610,7 @@ class ArenaDatabase:
                     metered_cost_usd=total_spend,
                     total_relay_cost_usd=total_relay_spend,
                     relay_cost_usd=total_relay_spend,
+                    failure_counts=failure_counts,
                 )
             )
 

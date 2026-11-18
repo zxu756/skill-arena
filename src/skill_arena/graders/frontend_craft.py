@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+
+VENDORED_SLOPLINT = Path(__file__).resolve().parent / "vendor" / "hallmark" / "sloplint.mjs"
+VENDORED_SLOPLINT_VERSION = "hallmark v2.0.0 (04977e1)"
+SLOPLINT_ENV_VAR = "SKILL_ARENA_SLOPLINT"
+SLOPLINT_TIMEOUT_SEC = 120
 
 
 @dataclass(slots=True)
@@ -15,6 +22,24 @@ class FrontendCraftAudit:
     fails: int
     warns: int
     findings: list[str]
+    sloplint_source: str = ""
+
+
+def resolve_sloplint_script(explicit: Path | None = None) -> tuple[Path, str]:
+    """Pick the sloplint.mjs to run: explicit path, then $SKILL_ARENA_SLOPLINT, then the vendored copy."""
+    if explicit is not None:
+        return Path(explicit), "explicit"
+    env_val = os.environ.get(SLOPLINT_ENV_VAR, "").strip()
+    if env_val:
+        return Path(env_val).expanduser(), f"env {SLOPLINT_ENV_VAR}"
+    return VENDORED_SLOPLINT, f"vendored {VENDORED_SLOPLINT_VERSION}"
+
+
+def _sha256_prefix(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "unreadable"
 
 
 _EM_OR_EN_DASH_RE = re.compile(r"[\u2014\u2013]")
@@ -69,16 +94,26 @@ def audit_html_craft(html_path: Path, sloplint_script: Path | None = None) -> Fr
                 findings.append(f"FAIL [off-4px-grid]: Off-scale spacing value {px_match.group(0)} in '{match.group(0).strip()}'.")
                 break
 
-    default_sloplint = sloplint_script or (Path.home() / ".agents/skills/hallmark/scripts/sloplint.mjs")
+    script, origin = resolve_sloplint_script(sloplint_script)
     node_bin = shutil.which("node")
-    if node_bin and default_sloplint.is_file():
-        proc = subprocess.run(
-            [node_bin, str(default_sloplint), str(html_path), "--scope", "app"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        out = (proc.stdout + "\n" + proc.stderr).strip()
+    if not script.is_file():
+        source = f"not run: {origin} {script} is missing (built-in rules only)"
+    elif not node_bin:
+        source = f"not run: node not found (built-in rules only); would use {origin} {script}"
+    else:
+        source = f"{origin} {script} sha256:{_sha256_prefix(script)}"
+        try:
+            proc = subprocess.run(
+                [node_bin, str(script), str(html_path), "--scope", "app"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=SLOPLINT_TIMEOUT_SEC,
+            )
+            out = (proc.stdout + "\n" + proc.stderr).strip()
+        except subprocess.TimeoutExpired:
+            out = ""
+            source += f" (timed out after {SLOPLINT_TIMEOUT_SEC}s)"
         summary_match = re.search(r"(\d+)\s+FAIL,\s*(\d+)\s+REFLEX,\s*(\d+)\s+WARN", out)
         if summary_match:
             s_fail = int(summary_match.group(1)) + int(summary_match.group(2))
@@ -87,6 +122,7 @@ def audit_html_craft(html_path: Path, sloplint_script: Path | None = None) -> Fr
                 fails = max(fails, s_fail)
                 warns = max(warns, s_warn)
                 findings.append(f"sloplint.mjs: {out.splitlines()[0]}")
+                findings.extend(f"sloplint.mjs: {line}" for line in out.splitlines()[1:] if line.strip())
 
     passed = fails == 0 and warns == 0
-    return FrontendCraftAudit(passed=passed, fails=fails, warns=warns, findings=findings)
+    return FrontendCraftAudit(passed=passed, fails=fails, warns=warns, findings=findings, sloplint_source=source)

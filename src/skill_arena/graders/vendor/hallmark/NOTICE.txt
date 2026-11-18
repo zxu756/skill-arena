@@ -1,0 +1,19 @@
+Vendored Hallmark sloplint
+==========================
+
+Files: sloplint.mjs, sloplint-render.mjs (imported by sloplint.mjs only with --render), LICENSE.
+Source: Hallmark design skill, https://github.com/Nutlope/hallmark, scripts/ directory,
+        version 2.0.0, commit 04977e1 (as installed in ~/.agents/skills/hallmark on 2026-11-13).
+License: MIT, Copyright (c) 2026 Hallmark contributors (see LICENSE in this directory).
+Copied unmodified on 2026-11-18.
+
+SHA-256:
+  sloplint.mjs         23fb94903ae0e3b709019380443163bdc50390a246911e3423b83695e4bc8037
+  sloplint-render.mjs  228f14808cbf872ab6dcc5f4f9e8d58a5a9060028f1530bec80e24dbd12737f3
+
+Not vendored: photos.json (an optional stock-photo library sloplint reads inside try/catch; without it
+the stock-photo licence gate only matches by URL). SkillArena never passes --render, --before or --kept,
+so sloplint-render.mjs (puppeteer) is never loaded and sloplint writes no files.
+
+SkillArena uses this copy by default so grading does not depend on what the host has installed.
+Set SKILL_ARENA_SLOPLINT=/path/to/sloplint.mjs to grade with another copy; the verdict records which one ran.

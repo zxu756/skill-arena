@@ -13,10 +13,19 @@ import re
 import shutil
 import tempfile
 import time
+import traceback
 import uuid
 
-from skill_arena.graders.deterministic import evaluate_sandbox, verify_test_runner_available
-from skill_arena.models import ContenderConfig, TaskSpec, TokenUsageLedger, TrajectoryStep, TrialResult
+from skill_arena.graders.deterministic import cap_grader_output, evaluate_sandbox, verify_test_runner_available
+from skill_arena.models import (
+    ContenderConfig,
+    GraderVerdict,
+    TaskSpec,
+    TokenUsageLedger,
+    TrajectoryStep,
+    TrialResult,
+)
+from skill_arena.outcomes import classify_trial_failure, is_interrupted
 from skill_arena.runners.xray_bridge import XRayMeteringBridge
 from skill_arena.sandbox.skill_injector import SkillInjector, SkillMountReport
 from skill_arena.sandbox.worktree_pool import BoundedCommandOutcome, SandboxHandle, WorktreeSandboxPool
@@ -50,6 +59,19 @@ class RelayStepRecord:
     tokens: int | None = None
     changed_files: list[str] = field(default_factory=list)
     final_message: str = ""
+    log_md_found: bool = False
+    raw_log_tail: str = ""
+
+
+@dataclass(slots=True)
+class AgentRunInfo:
+    """What the driver learned about one agent run beyond token usage (for failure categories)."""
+
+    wall_ms: int | None = None
+    relay_wrote_log: bool = True
+    final_message: str = ""
+    agent_texts: tuple[str, ...] = ()
+    changed_files: list[str] = field(default_factory=list)
 
 
 def _real_account_home() -> Path:
@@ -257,6 +279,7 @@ def parse_relay_artifacts(workdir: Path) -> RelayStepRecord:
     rec = RelayStepRecord()
     if not log_md.is_file():
         return rec
+    rec.log_md_found = True
 
     lines = log_md.read_text(encoding="utf-8", errors="replace").splitlines()
     step_records: list[RelayStepRecord] = []
@@ -314,6 +337,7 @@ def parse_relay_artifacts(workdir: Path) -> RelayStepRecord:
         cost_usd=round(sum(log_md_costs), 6) if log_md_costs else None,
         tokens=sum(log_md_tokens) if log_md_tokens else None,
         changed_files=merged_changed,
+        log_md_found=True,
     )
 
     if rec.step_id:
@@ -334,6 +358,8 @@ def parse_relay_artifacts(workdir: Path) -> RelayStepRecord:
                 pass
 
         raw_log = relay_dir / f"{rec.step_id}.log"
+        if raw_log.is_file():
+            rec.raw_log_tail = raw_log.read_text(encoding="utf-8", errors="replace")[-20_000:]
         if raw_log.is_file() and (rec.cost_usd is None or rec.tokens is None):
             raw_txt = raw_log.read_text(encoding="utf-8", errors="replace").strip()
             candidates = [raw_txt] + [
@@ -482,13 +508,14 @@ class HarnessDriver:
             exec_outcome: BoundedCommandOutcome | None = None
             if is_simulated:
                 usage, steps = self._execute_simulated_contender(handle, task, contender, mount_report, rep_index)
+                run_info = AgentRunInfo(wall_ms=int(usage.total_latency_ms))
             else:
                 remaining_budget = (
                     max(0.0, float(self.budget_usd) - self.cumulative_cost_usd)
                     if self.budget_usd is not None
                     else None
                 )
-                usage, steps, exec_outcome = self._execute_real_cli(
+                usage, steps, exec_outcome, run_info = self._execute_real_cli(
                     handle,
                     task,
                     contender,
@@ -506,13 +533,35 @@ class HarnessDriver:
             if trial_effective_cost > self.max_observed_trial_cost:
                 self.max_observed_trial_cost = trial_effective_cost
 
-            verdict, git_diff = evaluate_sandbox(
-                handle,
-                task,
-                agent_timed_out=bool(exec_outcome and exec_outcome.timed_out),
-                reaped_descendant_pids=list(exec_outcome.reaped_descendant_pids) if exec_outcome else [],
-                unreaped_descendant_pids=list(exec_outcome.unreaped_descendant_pids) if exec_outcome else [],
-                leaked_processes=list(exec_outcome.leaked_processes) if exec_outcome else [],
+            try:
+                verdict, git_diff = evaluate_sandbox(
+                    handle,
+                    task,
+                    agent_timed_out=bool(exec_outcome and exec_outcome.timed_out),
+                    reaped_descendant_pids=list(exec_outcome.reaped_descendant_pids) if exec_outcome else [],
+                    unreaped_descendant_pids=list(exec_outcome.unreaped_descendant_pids) if exec_outcome else [],
+                    leaked_processes=list(exec_outcome.leaked_processes) if exec_outcome else [],
+                )
+            except Exception as exc:  # noqa: BLE001 - a grader crash is recorded, not fatal to the experiment
+                verdict = GraderVerdict(
+                    passed=False,
+                    exit_code=1,
+                    anti_cheat_clean=True,
+                    summary=f"GRADER ERROR: {type(exc).__name__}: {exc}",
+                    stdout_tail=cap_grader_output(traceback.format_exc()),
+                    failure_kind="grader_error",
+                )
+                git_diff = ""
+            verdict.failure_kind = classify_trial_failure(
+                verdict,
+                interrupted=is_interrupted(usage.relay_status, verdict.summary),
+                is_simulated=is_simulated,
+                relay_status=usage.relay_status,
+                agent_texts=run_info.agent_texts,
+                agent_produced_output=bool(
+                    run_info.final_message.strip() or git_diff.strip() or run_info.changed_files
+                ),
+                relay_wrote_log=run_info.relay_wrote_log,
             )
             steps.append(
                 TrajectoryStep(
@@ -547,6 +596,7 @@ class HarnessDriver:
                 started_at=started_at,
                 finished_at=finished_at,
                 is_simulated=is_simulated,
+                agent_wall_ms=run_info.wall_ms,
             )
         finally:
             self.pool.release(handle)
@@ -689,7 +739,14 @@ class HarnessDriver:
                     latency_ms=wall_ms,
                 )
             )
-            return usage, steps, outcome
+            run_info = AgentRunInfo(
+                wall_ms=wall_ms,
+                relay_wrote_log=relay_rec.log_md_found,
+                final_message=relay_rec.final_message,
+                agent_texts=(stderr[-20_000:], stdout[-20_000:], relay_rec.raw_log_tail),
+                changed_files=list(relay_rec.changed_files),
+            )
+            return usage, steps, outcome, run_info
         finally:
             shutil.rmtree(handle.root / ".relay", ignore_errors=True)
             shutil.rmtree(prompt_dir, ignore_errors=True)

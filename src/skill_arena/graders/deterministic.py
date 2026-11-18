@@ -13,12 +13,25 @@ from typing import Any
 
 from skill_arena.graders.frontend_craft import audit_html_craft
 from skill_arena.models import GraderVerdict, TaskSpec
+from skill_arena.outcomes import grading_failure_kind
 from skill_arena.sandbox.worktree_pool import SandboxHandle, WorktreeSandboxPool
 
 _UNITTEST_RAN_RE = re.compile(r"\bRan\s+(\d+)\s+tests?\s+in\b")
 _PYTEST_ZERO_RE = re.compile(r"\b(?:no tests ran|collected\s+0\s+items)\b", re.IGNORECASE)
 _PYTEST_PASSED_RE = re.compile(r"\b(\d+)\s+passed\b")
 _PYTEST_PROBE_CACHE: dict[tuple[str, int], bool] = {}
+
+# Grader output is stored whole up to this many characters (head and tail kept beyond it).
+GRADER_OUTPUT_CAP = 200_000
+
+
+def cap_grader_output(text: str, cap: int = GRADER_OUTPUT_CAP) -> str:
+    """Return ``text`` unchanged when it fits, else its head and tail around a truncation marker."""
+    if len(text) <= cap:
+        return text
+    half = cap // 2
+    dropped = len(text) - 2 * half
+    return f"{text[:half]}\n\n[... {dropped} characters of grader output omitted ...]\n\n{text[-half:]}"
 
 
 def verify_test_runner_available(test_command: str) -> None:
@@ -138,21 +151,20 @@ def evaluate_sandbox(
         if leaked_list:
             reasons.append(f"LEAKED BACKGROUND PROCESS(ES): {_format_leaked_summary()}")
         reasons.append(f"diff +{added}/-{removed} ({bloat_ratio:.2f}x budget)")
-        return (
-            GraderVerdict(
-                passed=False,
-                exit_code=124,
-                anti_cheat_clean=anti_cheat_clean,
-                tampered_test_files=tampered_files,
-                leaked_processes=leaked_list,
-                diff_lines_added=added,
-                diff_lines_removed=removed,
-                diff_bloat_ratio=bloat_ratio,
-                summary="; ".join(reasons),
-                stdout_tail="Trial aborted and failed due to agent execution timeout.",
-            ),
-            git_diff,
+        timeout_verdict = GraderVerdict(
+            passed=False,
+            exit_code=124,
+            anti_cheat_clean=anti_cheat_clean,
+            tampered_test_files=tampered_files,
+            leaked_processes=leaked_list,
+            diff_lines_added=added,
+            diff_lines_removed=removed,
+            diff_bloat_ratio=bloat_ratio,
+            summary="; ".join(reasons),
+            stdout_tail="Trial aborted and failed due to agent execution timeout.",
         )
+        timeout_verdict.failure_kind = grading_failure_kind(timeout_verdict, interrupted=True)
+        return timeout_verdict, git_diff
 
     grading_dir = Path(tempfile.mkdtemp(prefix="sa-clean-grade-", dir=handle.root.parent))
     try:
@@ -166,17 +178,19 @@ def evaluate_sandbox(
             timeout_sec=min(60, task.timeout_sec),
         )
         combined_out = ((stdout or "") + ("\n" if stdout and stderr else "") + (stderr or "")).strip()
-        tail = combined_out[-1200:] if len(combined_out) > 1200 else combined_out
+        full_out = combined_out
         zero_tests_ran = _detect_zero_tests_ran(task.test_command, exit_code, combined_out)
 
         sloplint_fails = 0
         sloplint_warns = 0
         craft_notes: list[str] = []
+        sloplint_source = ""
         if task.frontend_target_html:
             craft = audit_html_craft(grading_dir / task.frontend_target_html)
             sloplint_fails = craft.fails
             sloplint_warns = craft.warns
             craft_notes = craft.findings
+            sloplint_source = craft.sloplint_source
     finally:
         shutil.rmtree(grading_dir, ignore_errors=True)
 
@@ -211,24 +225,25 @@ def evaluate_sandbox(
             reasons.append("Hallmark craft gate clean (0 FAIL, 0 WARN)")
         else:
             reasons.append(f"Craft gate {sloplint_fails} FAIL / {sloplint_warns} WARN")
-            if craft_notes:
-                tail = (tail + "\n" + "\n".join(craft_notes)).strip()[-1200:]
+        if craft_notes:
+            full_out = (full_out + "\n\n--- craft findings ---\n" + "\n".join(craft_notes)).strip()
 
     reasons.append(f"diff +{added}/-{removed} ({bloat_ratio:.2f}x budget)")
-    return (
-        GraderVerdict(
-            passed=passed,
-            exit_code=effective_exit,
-            anti_cheat_clean=anti_cheat_clean,
-            tampered_test_files=tampered_files,
-            leaked_processes=leaked_list,
-            diff_lines_added=added,
-            diff_lines_removed=removed,
-            diff_bloat_ratio=bloat_ratio,
-            sloplint_fails=sloplint_fails,
-            sloplint_warns=sloplint_warns,
-            summary="; ".join(reasons),
-            stdout_tail=tail,
-        ),
-        git_diff,
+    verdict = GraderVerdict(
+        passed=passed,
+        exit_code=effective_exit,
+        anti_cheat_clean=anti_cheat_clean,
+        tampered_test_files=tampered_files,
+        leaked_processes=leaked_list,
+        diff_lines_added=added,
+        diff_lines_removed=removed,
+        diff_bloat_ratio=bloat_ratio,
+        sloplint_fails=sloplint_fails,
+        sloplint_warns=sloplint_warns,
+        summary="; ".join(reasons),
+        stdout_tail=cap_grader_output(full_out),
+        craft_findings=list(craft_notes),
+        sloplint_source=sloplint_source,
     )
+    verdict.failure_kind = grading_failure_kind(verdict)
+    return verdict, git_diff

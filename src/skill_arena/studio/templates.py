@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from skill_arena.studio.analysis_html import render_design_analysis
 from skill_arena.i18n import (
     CATEGORY_ZH,
     TASK_TITLE_ZH,
@@ -302,6 +303,7 @@ def render_arena_html(
     tl_rep_hdr = "轮次" if is_zh else "Rep"
     tl_res_hdr = "结果" if is_zh else "Result"
 
+    analysis_html = _clean_prose(render_design_analysis(report, render_lang))
     safe_json = _clean_prose(json.dumps(report, ensure_ascii=True)).replace("</", "<\\/")
     zh_titles_json = _clean_prose(json.dumps(TASK_TITLE_ZH, ensure_ascii=False)).replace("</", "<\\/")
     zh_cats_json = _clean_prose(json.dumps(CATEGORY_ZH, ensure_ascii=False)).replace("</", "<\\/")
@@ -763,6 +765,24 @@ def render_arena_html(
       font-weight: 700;
     }}
 
+    .analysis-h {{
+      font-size: 14px;
+      margin: 16px 0 8px;
+      padding: 0 20px;
+      color: var(--ink-secondary);
+    }}
+
+    .analysis-scroll {{
+      overflow-x: auto;
+    }}
+
+    .analysis-foot {{
+      font-size: 12px;
+      color: var(--ink-muted);
+      padding: 8px 20px 0;
+      margin: 0;
+    }}
+
     .panel-note {{
       font-size: 12px;
       color: var(--ink-muted);
@@ -1112,6 +1132,8 @@ def render_arena_html(
           </tbody>
         </table>
       </section>
+
+      {analysis_html}
     </div>
 
     <section id="view-replay" class="panel" {replay_hidden}>
@@ -1880,6 +1902,9 @@ def render_arena_html(
           const active = btn.getAttribute("data-lang-switch") === currentLang;
           btn.classList.toggle("is-active", active);
           btn.setAttribute("aria-pressed", active ? "true" : "false");
+        }});
+        document.querySelectorAll("[data-lang-block]").forEach((el) => {{
+          el.hidden = el.getAttribute("data-lang-block") !== currentLang;
         }});
         populateTaskSelect();
         renderScoreboardAndMatrix();

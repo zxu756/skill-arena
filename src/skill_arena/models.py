@@ -366,6 +366,8 @@ class LeaderboardSummary:
     metered_cost_usd: float | None = None
     total_relay_cost_usd: float | None = None
     relay_cost_usd: float | None = None
+    # Trials per failure category (passed, wrong, interrupted, anti_cheat, craft, infra, grader_error).
+    failure_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
