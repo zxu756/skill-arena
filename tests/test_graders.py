@@ -281,3 +281,59 @@ def test_new_files_under_tests_that_are_not_plain_test_modules_stay_forbidden(
     finally:
         pool.release(handle)
         pool.close()
+
+
+def _package_task() -> TaskSpec:
+    return TaskSpec(
+        task_id="pkg-init",
+        title="Extend a package's public API",
+        category="refactor_test",
+        prompt="Export g from pkg.",
+        test_command="python3 -m unittest tests/test_pkg.py",
+        protected_test_paths=["tests/test_pkg.py"],
+        seed_files={
+            "pkg/__init__.py": "from pkg.core import f\n",
+            "pkg/core.py": "def f():\n    return 1\n",
+            "tests/__init__.py": "",
+            "tests/test_pkg.py": (
+                "import unittest\nimport pkg\n\n"
+                "class T(unittest.TestCase):\n"
+                "    def test_g(self):\n"
+                "        self.assertEqual(pkg.g(), 2)\n"
+            ),
+        },
+    )
+
+
+def test_editing_a_shipped_package_init_is_allowed_and_graded(tmp_path: Path) -> None:
+    """Seen in a real run: the task required adding to `ledgerly/__init__.py`, and the edit was
+    flagged as tampering and left out of the grading checkout."""
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = _package_task()
+    handle = pool.acquire(task, "pkg_init_ok")
+    try:
+        (handle.root / "pkg" / "core.py").write_text("def f():\n    return 1\n\ndef g():\n    return 2\n", encoding="utf-8")
+        (handle.root / "pkg" / "__init__.py").write_text("from pkg.core import f, g\n", encoding="utf-8")
+        verdict, _ = evaluate_sandbox(handle, task)
+        assert verdict.anti_cheat_clean, verdict.tampered_test_files
+        assert verdict.passed, verdict.summary
+    finally:
+        pool.release(handle)
+        pool.close()
+
+
+@pytest.mark.parametrize("bad_rel", ["tests/__init__.py", "newpkg/__init__.py"])
+def test_new_or_test_dir_init_files_stay_forbidden(tmp_path: Path, bad_rel: str) -> None:
+    pool = WorktreeSandboxPool(tmp_path / "pool")
+    task = _package_task()
+    handle = pool.acquire(task, "pkg_init_bad")
+    try:
+        target = handle.root / bad_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("import os\n", encoding="utf-8")
+        verdict, _ = evaluate_sandbox(handle, task)
+        assert not verdict.anti_cheat_clean
+        assert bad_rel in verdict.tampered_test_files
+    finally:
+        pool.release(handle)
+        pool.close()

@@ -89,6 +89,22 @@ def is_forbidden_agent_path(rel_path: str, protected_paths: set[str]) -> bool:
     return False
 
 
+def is_editable_existing_package_init(rel_path: str, baseline_files: dict[str, bytes], protected_paths: set[str]) -> bool:
+    """An `__init__.py` the task itself shipped, outside any test directory, is ordinary source code.
+
+    New `__init__.py` files stay forbidden (they can hijack test imports), and so does any
+    `__init__.py` under `test/` or `tests/`. Editing or deleting one that was part of the
+    starting code (e.g. a package's public API) is part of the job.
+    """
+    norm = rel_path.strip("/").replace("\\", "/")
+    if norm not in baseline_files or norm in protected_paths:
+        return False
+    parts = norm.split("/")
+    if parts[-1] != "__init__.py" or any(p in {"test", "tests"} for p in parts[:-1]):
+        return False
+    return not _TEST_FILE_RE.search(norm)
+
+
 # A plain test module at the repository root or anywhere under tests/ (agents doing TDD put
 # their own tests in either place). Such files never enter the clean grading checkout.
 _NEW_AGENT_TEST_FILE_RE = re.compile(r"^(?:tests?/(?:[A-Za-z0-9_.-]+/)*)?test_[A-Za-z0-9_]+\.py$")
@@ -357,6 +373,8 @@ class SandboxHandle:
             if base_bytes is None and rel_path in self.hidden_test_files:
                 # The agent wrote a file where a hidden test will go: the grader overwrites it, so it is not tampering.
                 continue
+            if is_editable_existing_package_init(rel_path, self.baseline_files, protected_set):
+                continue
             if is_forbidden_agent_path(rel_path, protected_set):
                 _mark(rel_path)
                 target = self.root / rel_path
@@ -385,7 +403,9 @@ class SandboxHandle:
 
         # Apply ONLY permitted non-test, non-stdlib, non-__init__.py agent changes
         for rel_path, cur_bytes in current_files.items():
-            if is_forbidden_agent_path(rel_path, protected_set):
+            if is_forbidden_agent_path(rel_path, protected_set) and not is_editable_existing_package_init(
+                rel_path, self.baseline_files, protected_set
+            ):
                 continue
             if self.baseline_files.get(rel_path) != cur_bytes:
                 out_file = dest_dir / rel_path
@@ -395,7 +415,10 @@ class SandboxHandle:
         for rel_path in self.baseline_files:
             if rel_path in {"AGENTS.md", "CLAUDE.md"}:
                 continue
-            if rel_path not in current_files and not is_forbidden_agent_path(rel_path, protected_set):
+            if rel_path not in current_files and (
+                not is_forbidden_agent_path(rel_path, protected_set)
+                or is_editable_existing_package_init(rel_path, self.baseline_files, protected_set)
+            ):
                 victim = dest_dir / rel_path
                 if victim.is_file():
                     victim.unlink()
