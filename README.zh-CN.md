@@ -15,6 +15,7 @@
 5. **干净检出判分与 SHA-256 防作弊校验**（*加固项，`v0.3.0` 起*） - 运行后逐字节比对受保护测试文件的 SHA-256 摘要，拦截智能体修改或删除 `tests/` 下的文件、在 `tests/` 下新增辅助模块、`conftest.py`、`__init__.py` 及标准库/测试器同名覆盖模块（`unittest.py`、`pytest.py`、`sitecustomize.py`）；从下一版起，智能体可以**新增**自己写的 `tests/**/test_*.py` 测试模块（例如在测试驱动开发类 skill 下），不算作弊，这些文件也不会被复制进判分用的干净检出目录，拒绝 `0` 测试空跑，对超时或残留后台进程直接判失败，并在仅含合法源码变更的全新干净检出目录中执行判分。
 6. **Git 历史提交任务提取（`extract-commit`）**（*加固项，`v0.3.0` 起*） - 从本地 Git 缺陷修复提交提取评测任务：提示词中不包含提交标题与正文说明，沙盒仅导出修复前父提交的干净文件树快照（不含修复提交的 `.git` 历史），并自动识别 `pytest` 与 `unittest`（无法唯一判定时要求显式传入 `--test-cmd`）。
 7. **原生中英双语 CLI 与实时切换看板** - 支持 `--lang {auto,zh,en}`、`SKILL_ARENA_LANG` 与 `LC_ALL` / `LANG`（`zh*`）自动识别；使用 `--cli simulate` 时，终端、数据库与导出 HTML 均显著标注 `[SIMULATED / 模拟数据]`。
+8. **为大规模 A/B 设计的实验功能**（*`v0.3.0` 之后加入*） - `pool-export` 把题库（`task.json`、`start/`、`tests/`、`reference/`、`mutants/<名字>/`）转成 TaskSpec JSON，分**可见测试**版（测试放进工作区并受保护）和**隐藏测试**版（工作区里没有测试，判分时才把测试覆盖进干净检出目录；agent 在隐藏测试路径上写的文件会被覆盖，不算作弊），题号加 `@visible` / `@hidden` 后缀。`--arm 名字=路径[,路径...]`（可重复）让多个 skill 分别和始终存在的无技能对照组比较：每组比较给出按题配对的置信区间、按题差值的符号翻转置换检验 p 值（非零差值的题不超过 16 道时精确枚举，否则固定种子抽样 20000 次）和 Holm 校正后的 p 值。试次按随机分块顺序运行（每个 `(题目, 轮次)` 块包含所有组；`--seed`），用 `--workers N` 个线程并行，并记录启动序号和开始、结束时间。每个判分结果带失败原因（`passed`、`wrong`、`interrupted`、`anti_cheat`、`craft`、`infra`、`grader_error`）和完整判分输出（最多 200 KB）；Hallmark 的 `sloplint.mjs` 已随包附带（MIT 许可，见 `graders/vendor/hallmark/NOTICE.txt`；可用 `SKILL_ARENA_SLOPLINT` 换成别的副本），判分结果记录用的是哪一份。报告按组新增：时限曲线 `Pass@T`（通过**且**在 T = 60/120/180/300/600/900 秒和时限内结束）、agent 自写测试的变异得分（在参考实现和每个变异体上运行）、行为指标（跑测试次数、是否先写测试、是否读了 `SKILL.md`；只有 Mistral `vibe` 经 `agent-relay` 运行时留有工具调用记录，其他 CLI 显示 n/a），以及分类别（和分可见性）的按题配对差值。
 
 ## 当前限制
 
@@ -26,6 +27,7 @@
 - **macOS `SIP` 系统二进制与清空环境变量的脱离守护进程边界（`K13`、`K16`）**：每次试次会注入唯一环境变量 `SKILL_ARENA_TRIAL_TOKEN`，结束时联合继承 `flock` 文件锁、试次沙盒 `cwd` 与打开文件（`lsof +D`）扫描以及 `ps eww` 检索强杀逃逸进程，在试次结果 `leaked_processes` 中记录残留进程并将该试次判失败。但由于 macOS 缺乏非特权 PID 命名空间/`cgroup`，且对当前用户全局进程做试次前后差分会误伤宿主机上的并发任务，若进程脱离会话（`setsid` / 双 `fork`）、切出沙盒目录（`chdir`）并关闭全部工作区与锁文件描述符后，同时满足以下任一情形：（a）执行受系统完整性保护（`SIP`）保护的 Apple 平台二进制（如 `/bin/sleep`、`/bin/sh`，其对普通权限调用方的 `ps eww` 隐藏环境变量），或（b）主动清空或移除环境变量中的 `SKILL_ARENA_TRIAL_TOKEN`（如 `execve(..., env={})`、`os.environ.pop` 或 `env -i`），宿主机模式下**不保证**能检测或回收该守护进程（强隔离需依赖虚拟机）。
 - **`extract-commit` 提示词中的实现文件名与 `repo_path`**：`extract-commit` 虽然剥离了提交标题/正文并导出了独立文件树快照，但当前生成的提示词仍列出了该提交修改的实现文件名，且 `TaskSpec.repo_path` 指向磁盘上的源仓库路径（宿主机进程若主动越出工作目录按该路径读取源仓库仍可访问历史）。
 - **重复运行不是独立样本（`KR5`）**：`v0.3.0` 及以前用的是 Newcombe-Wilson 置信区间，按每组总试次数 `题目数 * k_reps` 汇总，把同一道题在 `--reps > 1` 下的多次重复当作独立样本，算出的区间偏窄。现在改为上面所说的按题计算。题目少时区间会故意很宽：8 道题 × 3 遍只能看出大约 30 个百分点的差别；增加题目比增加 `--reps` 有效得多。
+- **并行与预算**：用 `--workers N` 时，头 `N` 个试次在还不知道任何花费时就会启动，所以最多可能比 `--budget-usd` 多花 `N` 个试次；之后每次检查都会预留正在运行的试次的花费。`agent-relay` 会给 `vibe` 传 `--time-limit`，这是客户端到点打断，不会告诉模型（vibe 3.1.0 的提示词和会话记录里都没有这个时限）。
 - **合成模拟器边界（`K3`、`KR5`，`v0.3.0` 起）**：`--cli simulate` 仅用固定规则与合成公式离线自检评测管线，所有输出（包括最终统计结论行）强制携带 `[SIMULATED | 模拟]` 标记，且拒绝接收真实模型名称或 `--skill` 技能路径。
 
 ## 快速上手
@@ -66,6 +68,32 @@ uv run skill-arena run \
 
 # 启动本地交互式 Web Studio（排行榜 + 双轨轨迹与 Git Diff 同步回放）
 uv run skill-arena studio --lang zh --db .skill-arena/arena.sqlite --port 8765
+```
+
+## 用题库跑一次设计好的实验
+
+```bash
+# 导出题库里每道题的两个版本（题库格式见其 FORMAT.md）
+uv run skill-arena pool-export \
+  --pool /path/to/pool \
+  --variant visible \
+  --variant hidden \
+  --timeout-sec 900 \
+  --out suites/pool-ab.json
+
+# 两个 skill 分别对比无技能对照组，随机分块顺序，同时跑 4 个试次
+uv run skill-arena run \
+  --lang zh \
+  --suite suites/pool-ab.json \
+  --cli vibe \
+  --model deepseek-v4-1-flash-1017 \
+  --arm tdd=/path/to/tdd-skill \
+  --arm review=/path/to/review-skill \
+  --reps 3 \
+  --seed 20261118 \
+  --workers 4 \
+  --budget-usd 30 \
+  --html-out .skill-arena/pool-ab.html
 ```
 
 ## 从自有 Git 历史提取回归评测任务

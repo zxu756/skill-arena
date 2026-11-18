@@ -15,6 +15,7 @@
 5. **Clean-Checkout & SHA-256 Anti-Cheat Grader** *(Hardened, since `v0.3.0`)* - Verifies byte-exact SHA-256 digests of protected test files, blocks agent edits or deletions under `tests/`, agent-created `tests/` helpers, `conftest.py`, `__init__.py`, and stdlib-shadowing modules (`unittest.py`, `pytest.py`, `sitecustomize.py`); since the next release, an agent may *add* new `tests/**/test_*.py` modules of its own (for example under a test-driven-development skill) without an anti-cheat violation, and those files are never copied into the grading checkout, rejects `0`-test runs, fails trials on timeout or leaked background processes, and grades inside a clean baseline checkout carrying only permitted implementation edits.
 6. **Git Commit Task Extractor (`extract-commit`)** *(Hardened, since `v0.3.0`)* - Extracts a benchmark `TaskSpec` from a historical bug-fix commit: strips commit messages from the prompt, exports a standalone pre-fix tree snapshot without fix-commit Git history, and auto-detects `pytest` vs `unittest` (requiring `--test-cmd` when ambiguous).
 7. **Bilingual CLI & Live Web Switcher** - Supports `--lang {auto,zh,en}`, `SKILL_ARENA_LANG`, and `LC_ALL` / `LANG` (`zh*`) auto-detection across CLI tables, Studio, and single-file HTML exports (`[SIMULATED]` banners included whenever synthetic mode is used).
+8. **Experiment Design for Large A/B Runs** *(added after `v0.3.0`)* - `pool-export` turns a task pool (`task.json`, `start/`, `tests/`, `reference/`, `mutants/<name>/`) into TaskSpec JSON in a **visible** variant (tests in the workspace, protected) and a **hidden** variant (no tests in the workspace; the grader overlays them onto the clean grading checkout, so an agent file at a hidden-test path is overwritten, not counted as tampering); ids get `@visible` / `@hidden`. `--arm LABEL=PATH[,PATH...]` (repeatable) compares several skills against the always-present no-skill control: each comparison gets the task-paired CI, an exact sign-flip permutation p-value on the per-task differences (seeded Monte Carlo with 20000 draws beyond 16 non-zero tasks) and a Holm-adjusted p-value. Trials run in a randomized blocked order (each `(task, rep)` block holds every arm; `--seed`) on `--workers N` threads, with the launch index and start/finish time recorded. Every verdict carries a failure category (`passed`, `wrong`, `interrupted`, `anti_cheat`, `craft`, `infra`, `grader_error`) and the complete grader output (up to 200 KB); the Hallmark `sloplint.mjs` is vendored (MIT, see `graders/vendor/hallmark/NOTICE.txt`; `SKILL_ARENA_SLOPLINT` overrides it) and the verdict names the copy used. Reports add, per arm, a time-limit curve `Pass@T` (passed **and** finished within T = 60/120/180/300/600/900 s and the limit), the mutation score of the tests the agent wrote itself (run against the reference and each mutant), behaviour metrics (test runs, test-first, whether `SKILL.md` was read; only Mistral `vibe` records tool calls through `agent-relay`, other CLIs show n/a), and per-category (and per-variant) task-paired deltas.
 
 ## Current Limitations
 
@@ -26,6 +27,7 @@
 - **Detached macOS SIP platform binaries & environment-scrubbing daemons (`K13`, `K16`)**: SkillArena injects a unique `SKILL_ARENA_TRIAL_TOKEN` per trial and combines inherited `flock` descriptors, trial-sandbox `cwd` and open-file (`lsof +D`) scans, and `ps eww` inspection to `SIGKILL` escaped processes and mark the trial failed with `leaked_processes` recorded. However, because macOS lacks unprivileged PID namespaces/cgroups and diffing all host-UID processes would risk signaling unrelated concurrent user tasks, host-mode execution **does not guarantee** detecting or reaping detached (`setsid` / double-fork) processes that leave the sandbox directory (`chdir`), close all workspace and lock file descriptors, **and** either (a) execute a macOS `SIP`-protected Apple platform binary (such as `/bin/sleep` or `/bin/sh`, which strips environment variables from `ps eww` for unprivileged callers) or (b) scrub `SKILL_ARENA_TRIAL_TOKEN` from their environment (e.g. `execve(..., env={})`, `os.environ.pop`, or `env -i`). Full containment of these two classes requires VM isolation.
 - **`extract-commit` implementation filenames & `repo_path`**: While `extract-commit` removes commit subjects/bodies and exports a standalone pre-fix snapshot, the generated prompt currently lists the modified implementation filenames from the commit diff, and `TaskSpec.repo_path` points to the source repository path on disk (which a host-process agent could read outside its worktree).
 - **Repeated runs are not independent samples (`KR5`)**: Up to `v0.3.0` the interval was a Newcombe-Wilson CI that pooled all `tasks * k_reps` trial outcomes per arm and treated repeated runs (`--reps > 1`) of the same task as independent Bernoulli trials, which made it narrower than it should be. It is now computed per task as described above. With few tasks the interval is wide on purpose: 8 tasks x 3 reps can only detect differences of roughly 30 percentage points; adding tasks narrows it far more than adding `--reps`.
+- **Parallel workers and the budget**: with `--workers N` the first `N` trials start before any cost is known, so a run can overshoot `--budget-usd` by up to `N` trials; after that each check reserves the cost of the trials still running. `vibe` gets `--time-limit` from `agent-relay`; it is a client-side interrupt that is not shown to the model (vibe 3.1.0 prompts and session journals do not contain it).
 - **Simulator scope (`K3`, `KR5`, since `v0.3.0`)**: `--cli simulate` uses deterministic synthetic outcomes and token formulas to verify the pipeline offline. Every output—including the final statistical verdict line—is marked `[SIMULATED]`, and real model names or `--skill` paths are rejected in `simulate` mode.
 
 ## Quick Start
@@ -66,6 +68,32 @@ uv run skill-arena run \
 
 # Launch local Web Studio (Scoreboard + Dual-Track Trajectory Replay)
 uv run skill-arena studio --lang en --db .skill-arena/arena.sqlite --port 8765
+```
+
+## Running a Designed Experiment from a Task Pool
+
+```bash
+# Export both variants of every task in a pool (see the pool's FORMAT.md)
+uv run skill-arena pool-export \
+  --pool /path/to/pool \
+  --variant visible \
+  --variant hidden \
+  --timeout-sec 900 \
+  --out suites/pool-ab.json
+
+# Two skills against the no-skill control, randomized blocked order, 4 trials at a time
+uv run skill-arena run \
+  --lang en \
+  --suite suites/pool-ab.json \
+  --cli vibe \
+  --model deepseek-v4-1-flash-1017 \
+  --arm tdd=/path/to/tdd-skill \
+  --arm review=/path/to/review-skill \
+  --reps 3 \
+  --seed 20261118 \
+  --workers 4 \
+  --budget-usd 30 \
+  --html-out .skill-arena/pool-ab.html
 ```
 
 ## Extracting Benchmark Tasks from Git History

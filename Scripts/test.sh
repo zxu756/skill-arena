@@ -45,10 +45,12 @@ case "$MODE" in
       case "$mod" in
         graders)
           [[ -f tests/test_graders.py ]] && FILES+=("tests/test_graders.py")
+          for f in tests/test_pool.py tests/test_outcomes.py tests/test_mutation.py; do [[ -f "$f" ]] && FILES+=("$f"); done
           K_EXPR+=("builtin_8_tasks" "anti_cheat")
           ;;
         sandbox)
           [[ -f tests/test_sandbox.py ]] && FILES+=("tests/test_sandbox.py")
+          [[ -f tests/test_behavior.py ]] && FILES+=("tests/test_behavior.py")
           K_EXPR+=("skill_injector")
           ;;
         proxy)
@@ -61,10 +63,12 @@ case "$MODE" in
           ;;
         store)
           [[ -f tests/test_store.py ]] && FILES+=("tests/test_store.py")
+          for f in tests/test_multi_arm.py tests/test_time_curve.py tests/test_category_breakdown.py; do [[ -f "$f" ]] && FILES+=("$f"); done
           K_EXPR+=("full_ab_experiment")
           ;;
         cli)
           [[ -f tests/test_cli.py ]] && FILES+=("tests/test_cli.py")
+          [[ -f tests/test_schedule.py ]] && FILES+=("tests/test_schedule.py")
           K_EXPR+=("version_and_bilingual" "cli_and_html_bilingual")
           ;;
         *)

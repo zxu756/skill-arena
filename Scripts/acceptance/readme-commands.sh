@@ -211,6 +211,49 @@ for doc_name, cmds, work_sub in (
             passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified exported HTML")
 
+        elif "skill-arena pool-export" in cmd:
+            sample_pool = tmp_root / "sample_pool"
+            task_dir = sample_pool / "calc-01-basics"
+            for rel, text in {
+                "task.json": json.dumps(
+                    {
+                        "task_id": "calc-01-basics",
+                        "title": "Integer helpers",
+                        "category": "parse",
+                        "prompt": "Implement calc.py.\n\n1. add(a, b) returns a + b.\n",
+                        "test_command": "python3 -m unittest tests/test_calc.py",
+                        "impl_paths": ["calc.py"],
+                    }
+                ),
+                "start/calc.py": "def add(a, b):\n    raise NotImplementedError\n",
+                "tests/test_calc.py": "import unittest\nfrom calc import add\n\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n",
+                "reference/calc.py": "def add(a, b):\n    return a + b\n",
+                "mutants/minus/calc.py": "def add(a, b):\n    return a - b\n",
+            }.items():
+                dest = task_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(text, encoding="utf-8")
+            real_cmd = cmd.replace("/path/to/pool", str(sample_pool))
+            rc, out = run_cmd(real_cmd, workdir)
+            assert rc == 0, f"{prefix} exited {rc}: {out}"
+            suite_json = workdir / "suites" / "pool-ab.json"
+            assert suite_json.is_file(), f"Missing {suite_json}"
+            specs = json.loads(suite_json.read_text(encoding="utf-8"))
+            assert sorted(s["task_id"] for s in specs) == ["calc-01-basics@hidden", "calc-01-basics@visible"], specs
+            assert all(s["timeout_sec"] == 900 and len(s["mutant_files"]) == 1 for s in specs), specs
+            passed_count += 1
+            print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified visible and hidden TaskSpecs")
+
+        elif "skill-arena run" in cmd and "--cli vibe" in cmd and "--arm" in cmd:
+            skipped_count += 1
+            print(
+                f"  SKIPPED: {cmd} — invokes a real paid agent CLI (vibe) with placeholder skill paths; "
+                "prohibited in offline acceptance"
+            )
+            # The placeholder --arm paths must be rejected before any agent starts (exit 2, nothing spent).
+            rc_gate, out_gate = run_cmd(cmd, workdir)
+            assert rc_gate == 2 and "not found" in out_gate, (rc_gate, out_gate)
+
         elif "skill-arena run" in cmd and "--cli claude" in cmd:
             skipped_count += 1
             print(
