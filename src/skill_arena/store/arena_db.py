@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
+import random
 import sqlite3
 import statistics
 from typing import Any
@@ -198,6 +199,110 @@ def compute_paired_task_comparison(
         "verdict_label_en": label_en,
         "verdict_label_zh": label_zh,
     }
+
+EXACT_PERMUTATION_MAX_TASKS = 16
+MONTE_CARLO_PERMUTATIONS = 20_000
+PERMUTATION_SEED = 20261118
+
+
+def sign_flip_permutation_p_value(
+    diffs: list[float],
+    *,
+    exact_max: int = EXACT_PERMUTATION_MAX_TASKS,
+    n_draws: int = MONTE_CARLO_PERMUTATIONS,
+    seed: int = PERMUTATION_SEED,
+) -> tuple[float, str]:
+    """Two-sided paired sign-flip permutation test on per-task differences ``d_i = p_T,i - p_C,i``.
+
+    Under the null hypothesis the skill does nothing, so each task's difference is as likely to have
+    either sign. The statistic is ``|sum(d_i)|``. Tasks with ``d_i = 0`` do not change any flipped
+    sum, so they are left out of the enumeration (the p-value is identical). Up to ``exact_max``
+    non-zero tasks all ``2^n`` sign patterns are enumerated (Gray code); beyond that a seeded Monte
+    Carlo with ``n_draws`` draws is used and ``(hits + 1) / (n_draws + 1)`` is returned.
+    """
+    nz = [float(d) for d in diffs if abs(float(d)) > 1e-12]
+    if not nz:
+        return 1.0, "sign_flip_exact"
+    observed = abs(sum(nz))
+    tol = 1e-9
+    n = len(nz)
+    if n <= exact_max:
+        total = sum(nz)
+        signs = [1] * n
+        hits = 1 if abs(total) >= observed - tol else 0
+        for i in range(1, 1 << n):
+            # Gray code: flip the lowest set bit of i.
+            k = (i & -i).bit_length() - 1
+            total -= 2 * signs[k] * nz[k]
+            signs[k] = -signs[k]
+            if abs(total) >= observed - tol:
+                hits += 1
+        return hits / float(1 << n), "sign_flip_exact"
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(n_draws):
+        total = 0.0
+        for d in nz:
+            total += d if rng.random() < 0.5 else -d
+        if abs(total) >= observed - tol:
+            hits += 1
+    return (hits + 1) / float(n_draws + 1), f"sign_flip_monte_carlo_{n_draws}"
+
+
+def holm_adjust(p_values: list[float]) -> list[float]:
+    """Holm-Bonferroni step-down adjusted p-values, returned in the input order."""
+    m = len(p_values)
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted = [1.0] * m
+    running = 0.0
+    for rank, idx in enumerate(order):
+        val = min(1.0, (m - rank) * float(p_values[idx]))
+        running = max(running, val)
+        adjusted[idx] = running
+    return adjusted
+
+
+def _paired_rows(ctrl_trials: list[TrialResult], treat_trials: list[TrialResult]) -> list[tuple[str, int, int, int, int]]:
+    ctrl_by_task: dict[str, list[TrialResult]] = defaultdict(list)
+    treat_by_task: dict[str, list[TrialResult]] = defaultdict(list)
+    for t in ctrl_trials:
+        ctrl_by_task[t.task_id].append(t)
+    for t in treat_trials:
+        treat_by_task[t.task_id].append(t)
+    return [
+        (
+            tid,
+            sum(1 for r in ctrl_by_task[tid] if r.passed),
+            len(ctrl_by_task[tid]),
+            sum(1 for r in treat_by_task[tid] if r.passed),
+            len(treat_by_task[tid]),
+        )
+        for tid in ctrl_by_task
+        if tid in treat_by_task
+    ]
+
+
+def compare_arms(
+    control_id: str | None,
+    treatment_id: str | None,
+    ctrl_trials: list[TrialResult],
+    treat_trials: list[TrialResult],
+) -> dict[str, Any]:
+    """Task-paired CI plus the exact / Monte Carlo sign-flip permutation p-value for one treatment."""
+    rows = _paired_rows(ctrl_trials, treat_trials)
+    comp = compute_paired_task_comparison(
+        control_id=control_id,
+        treatment_id=treatment_id,
+        per_task=[r[1:] for r in rows],
+        control_interrupted=sum(1 for t in ctrl_trials if trial_was_interrupted(t)),
+        treatment_interrupted=sum(1 for t in treat_trials if trial_was_interrupted(t)),
+    )
+    diffs = [xt / kt - xc / kc for _tid, xc, kc, xt, kt in rows if kc > 0 and kt > 0]
+    p_val, method = sign_flip_permutation_p_value(diffs)
+    comp["p_value"] = round(p_val, 6)
+    comp["p_value_method"] = method
+    return comp
+
 
 class ArenaDatabase:
     """Zero-dependency SQLite WAL store for SkillArena experiments and trajectories."""
@@ -615,42 +720,34 @@ class ArenaDatabase:
             )
 
         ctrl_summary = next((r for r in leaderboard if r.role == "control"), leaderboard[0] if leaderboard else None)
-        treat_summary = next(
-            (r for r in leaderboard if r.role == "treatment"),
-            leaderboard[1] if len(leaderboard) > 1 else None,
-        )
+        treat_summaries = [r for r in leaderboard if r.role == "treatment"]
+        if not treat_summaries and len(leaderboard) > 1:
+            treat_summaries = [leaderboard[1]]
         ctrl_cid_for_stats = ctrl_summary.contender_id if ctrl_summary else None
-        treat_cid_for_stats = treat_summary.contender_id if treat_summary else None
         ctrl_stat_trials = by_contender.get(ctrl_cid_for_stats or "", [])
-        treat_stat_trials = by_contender.get(treat_cid_for_stats or "", [])
-        ctrl_by_task: dict[str, list[TrialResult]] = defaultdict(list)
-        treat_by_task: dict[str, list[TrialResult]] = defaultdict(list)
-        for t in ctrl_stat_trials:
-            ctrl_by_task[t.task_id].append(t)
-        for t in treat_stat_trials:
-            treat_by_task[t.task_id].append(t)
-        paired_rows = [
-            (
-                sum(1 for r in ctrl_by_task[tid] if r.passed),
-                len(ctrl_by_task[tid]),
-                sum(1 for r in treat_by_task[tid] if r.passed),
-                len(treat_by_task[tid]),
+        comparisons: list[dict[str, Any]] = []
+        for treat_summary in treat_summaries or [None]:
+            treat_cid = treat_summary.contender_id if treat_summary else None
+            comp = compare_arms(
+                ctrl_cid_for_stats,
+                treat_cid,
+                ctrl_stat_trials,
+                by_contender.get(treat_cid or "", []),
             )
-            for tid in ctrl_by_task
-            if tid in treat_by_task
-        ]
-        stat_comp = compute_paired_task_comparison(
-            control_id=ctrl_cid_for_stats,
-            treatment_id=treat_cid_for_stats,
-            per_task=paired_rows,
-            control_interrupted=sum(1 for t in ctrl_stat_trials if trial_was_interrupted(t)),
-            treatment_interrupted=sum(1 for t in treat_stat_trials if trial_was_interrupted(t)),
-        )
-        stat_comp["is_simulated"] = exp_is_simulated
-        if exp_is_simulated:
-            stat_comp["verdict_label_zh"] = f"[SIMULATED | 模拟] {stat_comp['verdict_label_zh']}"
-            stat_comp["verdict_label_en"] = f"[SIMULATED] {stat_comp['verdict_label_en']}"
-        winner_id = stat_comp["winner"]
+            comp["treatment_label"] = treat_summary.label if treat_summary else None
+            comp["control_label"] = ctrl_summary.label if ctrl_summary else None
+            comp["is_simulated"] = exp_is_simulated
+            if exp_is_simulated:
+                comp["verdict_label_zh"] = f"[SIMULATED | 模拟] {comp['verdict_label_zh']}"
+                comp["verdict_label_en"] = f"[SIMULATED] {comp['verdict_label_en']}"
+            comparisons.append(comp)
+        holm = holm_adjust([float(c["p_value"]) for c in comparisons])
+        for comp, adj in zip(comparisons, holm):
+            comp["p_value_holm"] = round(adj, 6)
+            comp["holm_family_size"] = len(comparisons)
+            comp["significant_holm_05"] = bool(adj < 0.05)
+        stat_comp = comparisons[0]
+        winner_id = stat_comp["winner"] if len(comparisons) == 1 else None
         if winner_id is not None:
             for row in leaderboard:
                 row.rank = 1 if row.contender_id == winner_id else 2
@@ -770,5 +867,6 @@ class ArenaDatabase:
             "arms": [row.to_dict() for row in leaderboard],
             "trials": [tr.to_dict() for tr in trials],
             "statistical_comparison": stat_comp,
+            "comparisons": comparisons,
             "task_matrix": task_matrix,
         }

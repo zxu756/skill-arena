@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import uuid
@@ -50,6 +51,38 @@ def _load_tasks(suite_arg: str) -> list[TaskSpec]:
     if not tasks:
         raise ValueError(f"Unknown suite or category: {suite_arg}")
     return tasks
+
+
+_ARM_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,39}$")
+
+
+def parse_arm_specs(raw_arms: list[str], *, simulate: bool) -> list[tuple[str, list[str]]]:
+    """Parse repeatable ``--arm LABEL=PATH[,PATH...]`` values into ``(label, skill_paths)`` pairs."""
+    arms: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
+    for raw in raw_arms:
+        label, sep, paths_txt = str(raw).partition("=")
+        label = label.strip()
+        if not _ARM_LABEL_RE.match(label):
+            raise ValueError(
+                f"Invalid --arm label {label!r}: use 1-40 letters, digits, '_', '.', '+' or '-' "
+                "(e.g. --arm tdd=/path/to/tdd-skill)."
+            )
+        if label.lower() == "control" or label.lower() in seen:
+            raise ValueError(f"Duplicate or reserved --arm label {label!r}.")
+        seen.add(label.lower())
+        paths = [p.strip() for p in paths_txt.split(",") if p.strip()] if sep else []
+        if simulate:
+            if paths:
+                raise ValueError("`--cli simulate` arms take a label only (`--arm NAME`), no skill paths.")
+        else:
+            if not paths:
+                raise ValueError(f"--arm {label!r} needs at least one skill path (LABEL=PATH[,PATH...]).")
+            missing = [p for p in paths if not Path(p).expanduser().exists()]
+            if missing:
+                raise ValueError(f"--arm {label!r}: skill path(s) not found: {', '.join(missing)}")
+        arms.append((label, paths))
+    return arms
 
 
 def run_ab_experiment(
@@ -396,6 +429,31 @@ def _print_design_analysis(report: dict, lang: str = "en") -> None:
     rows = list(report.get("leaderboard") or [])
     if not rows:
         return
+    comparisons = list(report.get("comparisons") or [])
+    if comparisons:
+        print(
+            "\n--- 各实验组对比对照组（按题配对；置换检验 p 值，Holm 校正）---"
+            if is_zh
+            else "\n--- Each treatment vs control (task-paired; sign-flip permutation p, Holm-adjusted) ---"
+        )
+        for comp in comparisons:
+            lbl = str(comp.get("treatment_label") or comp.get("treatment_id") or "")[:48]
+            d_pp = float(comp.get("delta_pass_rate", 0.0)) * 100.0
+            lo_pp = float(comp.get("ci_low", 0.0)) * 100.0
+            hi_pp = float(comp.get("ci_high", 0.0)) * 100.0
+            p_raw = float(comp.get("p_value", 1.0))
+            p_holm = float(comp.get("p_value_holm", p_raw))
+            verdict = comp.get("verdict_label_zh" if is_zh else "verdict_label_en", "")
+            if is_zh:
+                print(
+                    f"{lbl}: 差值 {d_pp:+.1f} pp，95% 区间 [{lo_pp:+.1f}, {hi_pp:+.1f}] pp，"
+                    f"p={p_raw:.4f}，Holm p={p_holm:.4f}（{int(comp.get('tasks_paired', 0))} 道题）| {verdict}"
+                )
+            else:
+                print(
+                    f"{lbl}: delta {d_pp:+.1f} pp, 95% CI [{lo_pp:+.1f}, {hi_pp:+.1f}] pp, "
+                    f"p={p_raw:.4f}, Holm p={p_holm:.4f} ({int(comp.get('tasks_paired', 0))} tasks) | {verdict}"
+                )
     print("\n--- 失败原因（每组试验数）---" if is_zh else "\n--- Failure categories (trials per arm) ---")
     kinds = list(FAILURE_KIND_ZH)
     for row in rows:
@@ -449,6 +507,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model identifier (defaults to synthetic-sim-model for simulate, claude-sonnet-4-5 for real CLIs).",
     )
     p_run.add_argument("--skill", action="append", default=[], help="Path to SKILL.md or skill folder for Treatment.")
+    p_run.add_argument(
+        "--arm",
+        action="append",
+        default=[],
+        metavar="LABEL=PATH[,PATH...]",
+        help=(
+            "Add a treatment arm named LABEL that mounts these skills (repeatable; the no-skill control is always "
+            "present). Each arm is compared with the control, with Holm-adjusted permutation p-values."
+        ),
+    )
     p_run.add_argument("--reps", type=int, default=3, help="Isolated repetitions k per task (default: 3).")
     p_run.add_argument("--title", default=None, help="Experiment title.")
     p_run.add_argument("--db", default=".skill-arena/arena.sqlite", help="SQLite database path.")
@@ -635,6 +703,24 @@ def main(argv: list[str] | None = None) -> int:
             ctrl_label = f"{raw_cli} ({eff_model} · No Skill)"
             treat_label = f"{raw_cli} ({eff_model} {skill_label})"
 
+        treatment_arms: list[tuple[str, str, str, list[str]]] = [("arm_treatment", treat_label, treat_cli, list(args.skill))]
+        if args.arm:
+            try:
+                if args.skill:
+                    raise ValueError("Use either `--skill` (one treatment) or `--arm LABEL=PATH` (one or more), not both.")
+                parsed_arms = parse_arm_specs(list(args.arm), simulate=is_sim_cli)
+                treatment_arms = []
+                for arm_label, arm_paths in parsed_arms:
+                    if is_sim_cli:
+                        full_label = f"[SIMULATED] {eff_model} (+ Synthetic {arm_label})"
+                        validate_simulation_inputs(label=full_label)
+                    else:
+                        full_label = f"{raw_cli} ({eff_model} + {arm_label})"
+                    treatment_arms.append((f"arm_{arm_label}", full_label, treat_cli, arm_paths))
+            except ValueError as exc:
+                print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)
+                return 2
+
         try:
             validated_pass_env = list(normalize_pass_env_names(args.pass_env))
             tasks = _load_tasks(args.suite)
@@ -654,20 +740,23 @@ def main(argv: list[str] | None = None) -> int:
                     allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
                     pass_env=validated_pass_env,
                 ),
-                ContenderConfig(
-                    contender_id="arm_treatment",
-                    label=treat_label,
-                    role="treatment",
-                    cli=treat_cli,
-                    model=eff_model,
-                    skill_paths=list(args.skill),
-                    strip_default_skills=True,
-                    isolate_home=isolate_home,
-                    auth_copy_mode=bool(args.copy_auth),
-                    allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
-                    pass_env=validated_pass_env,
-                ),
             ]
+            for arm_id, arm_label, arm_cli, arm_paths in treatment_arms:
+                contenders.append(
+                    ContenderConfig(
+                        contender_id=arm_id,
+                        label=arm_label,
+                        role="treatment",
+                        cli=arm_cli,
+                        model=eff_model,
+                        skill_paths=list(arm_paths),
+                        strip_default_skills=True,
+                        isolate_home=isolate_home,
+                        auth_copy_mode=bool(args.copy_auth),
+                        allow_unisolated_host_home=bool(args.allow_unisolated_host_home),
+                        pass_env=validated_pass_env,
+                    )
+                )
             exp_id = run_ab_experiment(
                 db=db,
                 title=eff_title,

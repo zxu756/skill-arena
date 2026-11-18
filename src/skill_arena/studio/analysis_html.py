@@ -65,8 +65,41 @@ def _failure_block(report: dict[str, Any], is_zh: bool) -> str:
     return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body)
 
 
+def _comparisons_block(report: dict[str, Any], is_zh: bool) -> str:
+    comps = list(report.get("comparisons") or [])
+    if not comps:
+        return ""
+    headers = (
+        ["实验组", "配对题数", "Pass@1 差值", "95% 区间", "置换检验 p", "Holm 校正 p", "结论"]
+        if is_zh
+        else ["Treatment", "Paired tasks", "Pass@1 delta", "95% CI", "Permutation p", "Holm p", "Verdict"]
+    )
+    body = []
+    for c in comps:
+        body.append(
+            [
+                str(c.get("treatment_label") or c.get("treatment_id") or ""),
+                str(int(c.get("tasks_paired", 0))),
+                _pp(c.get("delta_pass_rate")),
+                f"[{_pp(c.get('ci_low'))}, {_pp(c.get('ci_high'))}]",
+                f"{float(c.get('p_value', 1.0)):.4f}",
+                f"{float(c.get('p_value_holm', c.get('p_value', 1.0))):.4f}",
+                str(c.get("verdict_label_zh" if is_zh else "verdict_label_en", "")),
+            ]
+        )
+    title = "各实验组对比对照组（按题配对）" if is_zh else "Each treatment vs control (task-paired)"
+    foot = (
+        "p 值来自按题差值的符号翻转置换检验（不超过 16 道非零差值题时精确枚举，否则 20000 次固定种子抽样）；"
+        "Holm 校正控制多个实验组的总体误判率。"
+        if is_zh
+        else "p from a sign-flip permutation test on per-task differences (exact up to 16 non-zero tasks, "
+        "else 20000 seeded draws); Holm adjusts for testing several treatments."
+    )
+    return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
+
+
 def _blocks(report: dict[str, Any], is_zh: bool) -> list[str]:
-    return [_failure_block(report, is_zh)]
+    return [_comparisons_block(report, is_zh), _failure_block(report, is_zh)]
 
 
 def render_design_analysis(report: dict[str, Any], render_lang: str) -> str:
