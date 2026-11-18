@@ -372,6 +372,7 @@ class ArenaDatabase:
                 "ALTER TABLE experiments ADD COLUMN completed_trials INTEGER;",
                 "ALTER TABLE trials ADD COLUMN is_simulated INTEGER NOT NULL DEFAULT 0;",
                 "ALTER TABLE trials ADD COLUMN meta_json TEXT;",
+                "ALTER TABLE experiments ADD COLUMN design_json TEXT;",
             ):
                 try:
                     conn.execute(alter_sql)
@@ -388,6 +389,7 @@ class ArenaDatabase:
         is_simulated: bool | None = None,
         budget_usd: float | None = None,
         planned_trials: int | None = None,
+        design: dict[str, Any] | None = None,
     ) -> None:
         sim = (
             bool(is_simulated)
@@ -403,8 +405,8 @@ class ArenaDatabase:
                 """
                 INSERT OR REPLACE INTO experiments
                 (experiment_id, title, suite_name, k_reps, contenders_json, created_at, is_simulated,
-                 budget_usd, cumulative_cost_usd, budget_stopped, planned_trials, completed_trials)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 budget_usd, cumulative_cost_usd, budget_stopped, planned_trials, completed_trials, design_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     experiment_id,
@@ -419,6 +421,7 @@ class ArenaDatabase:
                     0,
                     int(planned_trials) if planned_trials is not None else None,
                     0 if planned_trials is not None else None,
+                    json.dumps(design) if design is not None else None,
                 ),
             )
 
@@ -862,6 +865,9 @@ class ArenaDatabase:
             "budget_halted": budget_stopped,
             "planned_trials": int(raw_planned) if raw_planned is not None else inferred_planned,
             "completed_trials": int(raw_completed) if raw_completed is not None else len(trials),
+            "design": (
+                json.loads(exp_row["design_json"]) if "design_json" in exp_keys and exp_row["design_json"] else {}
+            ),
             "contenders": [c.to_dict() for c in contenders],
             "leaderboard": [row.to_dict() for row in leaderboard],
             "arms": [row.to_dict() for row in leaderboard],

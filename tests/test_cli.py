@@ -1443,8 +1443,11 @@ def test_kr8_cli_run_prints_per_trial_relay_cost_line_en_and_zh(
         assert rc == 0, out
         trial_lines = [ln for ln in out.splitlines() if ln.startswith(pass_badge)]
         assert len(trial_lines) == 2, f"Expected 2 per-trial stdout lines for {lang_code}, got: {trial_lines}\n{out}"
-        assert "| relay=$0.0135 |" in trial_lines[0], trial_lines[0]
-        assert "| relay=$0.0245 |" in trial_lines[1], trial_lines[1]
+        # Trials run in a randomized blocked order, so find each arm's line by its label.
+        ctrl_line = next(ln for ln in trial_lines if "No Skill" in ln)
+        treat_line = next(ln for ln in trial_lines if "kr8-skill" in ln)
+        assert "| relay=$0.0135 |" in ctrl_line, ctrl_line
+        assert "| relay=$0.0245 |" in treat_line, treat_line
 
 
 

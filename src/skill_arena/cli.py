@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import json
 from pathlib import Path
+import random
 import re
 import subprocess
 import sys
@@ -21,7 +23,7 @@ from skill_arena.i18n import (
     pad_cell,
     resolve_lang,
 )
-from skill_arena.models import ContenderConfig, TaskSpec
+from skill_arena.models import ContenderConfig, TaskSpec, TrialResult
 from skill_arena.runners.harness_driver import (
     SUPPORTED_RELAY_CLIS,
     HarnessDriver,
@@ -85,6 +87,32 @@ def parse_arm_specs(raw_arms: list[str], *, simulate: bool) -> list[tuple[str, l
     return arms
 
 
+DEFAULT_SCHEDULE_SEED = 20261118
+
+
+def build_trial_schedule(
+    tasks: list[TaskSpec],
+    contenders: list[ContenderConfig],
+    k_reps: int,
+    seed: int = DEFAULT_SCHEDULE_SEED,
+) -> list[tuple[TaskSpec, ContenderConfig, int]]:
+    """Randomized, blocked launch order for every (task, rep, arm) trial.
+
+    Each (task, rep) is a block holding every arm, so all arms meet the same conditions (time of day,
+    provider load, rate limits) close together. Arm order is shuffled inside each block and the blocks
+    themselves are shuffled, with one seeded generator so the order is reproducible.
+    """
+    rng = random.Random(int(seed))
+    blocks: list[list[tuple[TaskSpec, ContenderConfig, int]]] = []
+    for task in tasks:
+        for rep in range(1, int(k_reps) + 1):
+            arms = list(contenders)
+            rng.shuffle(arms)
+            blocks.append([(task, c, rep) for c in arms])
+    rng.shuffle(blocks)
+    return [trial for block in blocks for trial in block]
+
+
 def run_ab_experiment(
     db: ArenaDatabase,
     title: str,
@@ -101,11 +129,16 @@ def run_ab_experiment(
     relay_script: str | Path | None = None,
     budget_usd: float | None = None,
     pass_env: list[str] | tuple[str, ...] | None = None,
+    seed: int = DEFAULT_SCHEDULE_SEED,
+    workers: int = 1,
+    tell_agent_time_limit: bool = True,
 ) -> str:
     exp_id = experiment_id or f"exp_{uuid.uuid4().hex[:8]}"
+    workers = max(1, int(workers))
     verify_suite_runners_available(tasks)
     is_sim_exp = any(c.cli.split(":", 1)[0] == "simulate" for c in contenders)
-    planned_trials = len(tasks) * len(contenders) * int(k_reps)
+    schedule = build_trial_schedule(tasks, contenders, k_reps, seed)
+    planned_trials = len(schedule)
     db.create_experiment(
         exp_id,
         title=title,
@@ -115,6 +148,12 @@ def run_ab_experiment(
         is_simulated=is_sim_exp,
         budget_usd=budget_usd,
         planned_trials=planned_trials,
+        design={
+            "seed": int(seed),
+            "workers": workers,
+            "schedule": "blocked-randomized",
+            "tell_agent_time_limit": bool(tell_agent_time_limit),
+        },
     )
 
     is_zh = lang == "zh"
@@ -133,74 +172,105 @@ def run_ab_experiment(
         relay_script=relay_script,
         budget_usd=budget_usd,
         pass_env=pass_env,
+        tell_agent_time_limit=tell_agent_time_limit,
     )
-    try:
-        stop_loop = False
-        for task in tasks:
-            if stop_loop:
-                break
-            for contender in contenders:
-                if stop_loop:
-                    break
-                for rep in range(1, k_reps + 1):
-                    can_start, _rem_budget = driver.can_start_next_trial()
-                    if not can_start:
-                        stop_loop = True
-                        if not quiet:
-                            ceil_val = float(budget_usd or 0.0)
-                            overran = driver.cumulative_cost_usd > ceil_val + 1e-9
-                            if is_zh:
-                                reason_zh = (
-                                    f"已超出总预算上限，在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止。"
-                                    if overran
-                                    else f"在启动第 {driver.completed_trials + 1}/{planned_trials} 次试验前停止以避免超出预算。"
-                                )
-                                print(
-                                    f"[预算上限停止] 实验总预算上限 ${ceil_val:.4f}，"
-                                    f"当前累计花费 ${driver.cumulative_cost_usd:.4f}，{reason_zh}"
-                                )
-                            else:
-                                reason_en = (
-                                    f"budget already exceeded; halting before trial {driver.completed_trials + 1}/{planned_trials}."
-                                    if overran
-                                    else f"halting before trial {driver.completed_trials + 1}/{planned_trials} to avoid exceeding budget."
-                                )
-                                print(
-                                    f"[BUDGET STOPPED] Experiment budget ceiling ${ceil_val:.4f} "
-                                    f"(cumulative spend ${driver.cumulative_cost_usd:.4f}): {reason_en}"
-                                )
-                        break
 
-                    result = driver.run_trial(exp_id, task, contender, rep_index=rep)
-                    db.record_trial(result)
-                    if not quiet:
-                        cost_txt = (
-                            f"xray=${result.usage.total_cost_usd:.4f}"
-                            if (result.usage.is_metered and result.usage.total_cost_usd is not None)
-                            else ("xray=未计量" if is_zh else "xray=Unmetered")
-                        )
-                        relay_txt = (
-                            f"relay=${result.usage.relay_cost_usd:.4f}"
-                            if result.usage.relay_cost_usd is not None
-                            else "relay=n/a"
-                        )
-                        if is_zh:
-                            sim_tag = "[SIMULATED / 模拟数据] " if result.is_simulated else ""
-                            badge = "通过" if result.passed else "失败"
-                            print(
-                                f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (第 {rep}/{k_reps} 轮) "
-                                f"| {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
-                            )
-                        else:
-                            sim_tag = "[SIMULATED] " if result.is_simulated else ""
-                            badge = "PASS" if result.passed else "FAIL"
-                            print(
-                                f"{sim_tag}[{badge}] {task.task_id} | {contender.label} (rep {rep}/{k_reps}) "
-                                f"| {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
-                            )
+    def _announce_budget_stop() -> None:
+        if quiet:
+            return
+        ceil_val = float(budget_usd or 0.0)
+        overran = driver.cumulative_cost_usd > ceil_val + 1e-9
+        next_n = driver.completed_trials + 1
+        if is_zh:
+            reason_zh = (
+                f"已超出总预算上限，在启动第 {next_n}/{planned_trials} 次试验前停止。"
+                if overran
+                else f"在启动第 {next_n}/{planned_trials} 次试验前停止以避免超出预算。"
+            )
+            print(f"[预算上限停止] 实验总预算上限 ${ceil_val:.4f}，当前累计花费 ${driver.cumulative_cost_usd:.4f}，{reason_zh}")
+        else:
+            reason_en = (
+                f"budget already exceeded; halting before trial {next_n}/{planned_trials}."
+                if overran
+                else f"halting before trial {next_n}/{planned_trials} to avoid exceeding budget."
+            )
+            print(
+                f"[BUDGET STOPPED] Experiment budget ceiling ${ceil_val:.4f} "
+                f"(cumulative spend ${driver.cumulative_cost_usd:.4f}): {reason_en}"
+            )
+
+    def _report_trial(result: TrialResult) -> None:
+        # Runs on the main thread only: database writes and console output are never concurrent.
+        db.record_trial(result)
+        if quiet:
+            return
+        cost_txt = (
+            f"xray=${result.usage.total_cost_usd:.4f}"
+            if (result.usage.is_metered and result.usage.total_cost_usd is not None)
+            else ("xray=未计量" if is_zh else "xray=Unmetered")
+        )
+        relay_txt = (
+            f"relay=${result.usage.relay_cost_usd:.4f}" if result.usage.relay_cost_usd is not None else "relay=n/a"
+        )
+        order_txt = f"#{result.launch_index + 1}"
+        if is_zh:
+            sim_tag = "[SIMULATED / 模拟数据] " if result.is_simulated else ""
+            badge = "通过" if result.passed else "失败"
+            print(
+                f"{sim_tag}[{badge}] {order_txt} {result.task_id} | {result.contender_label} "
+                f"(第 {result.rep_index}/{k_reps} 轮) | {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
+            )
+        else:
+            sim_tag = "[SIMULATED] " if result.is_simulated else ""
+            badge = "PASS" if result.passed else "FAIL"
+            print(
+                f"{sim_tag}[{badge}] {order_txt} {result.task_id} | {result.contender_label} "
+                f"(rep {result.rep_index}/{k_reps}) | {cost_txt} | {relay_txt} | {result.usage.total_latency_ms}ms"
+            )
+
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="skill-arena-trial")
+    running: set[Future[TrialResult]] = set()
+    first_error: BaseException | None = None
+
+    def _collect(done: set[Future[TrialResult]]) -> None:
+        nonlocal first_error
+        for fut in sorted(done, key=lambda f: getattr(f, "launch_index", 0)):
+            running.discard(fut)
+            try:
+                _report_trial(fut.result())
+            except BaseException as exc:  # noqa: BLE001 - re-raised after in-flight trials finish
+                if first_error is None:
+                    first_error = exc
+
+    try:
+        for launch_index, (task, contender, rep) in enumerate(schedule):
+            while len(running) >= workers:
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                _collect(done)
+            if first_error is not None:
+                break
+            can_start, _rem_budget = driver.can_start_next_trial(in_flight=len(running))
+            if not can_start:
+                if running:
+                    # Spend still in flight may free up (or use up) the budget: wait, then decide again.
+                    done, _ = wait(running)
+                    _collect(done)
+                    can_start, _rem_budget = driver.can_start_next_trial(in_flight=0)
+                if not can_start:
+                    _announce_budget_stop()
+                    break
+            fut = executor.submit(driver.run_trial, exp_id, task, contender, rep, launch_index=launch_index)
+            fut.launch_index = launch_index  # type: ignore[attr-defined]
+            running.add(fut)
+        if running:
+            done, _ = wait(running)
+            _collect(done)
+        if first_error is not None:
+            raise first_error
         if budget_usd is not None and driver.cumulative_cost_usd > float(budget_usd) + 1e-9:
             driver.budget_stopped = True
     finally:
+        executor.shutdown(wait=True)
         db.update_experiment_budget_state(
             exp_id,
             budget_usd=budget_usd,
@@ -518,6 +588,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_run.add_argument("--reps", type=int, default=3, help="Isolated repetitions k per task (default: 3).")
+    p_run.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SCHEDULE_SEED,
+        help=f"Seed for the randomized, blocked trial order (default: {DEFAULT_SCHEDULE_SEED}).",
+    )
+    p_run.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Trials to run at the same time (default: 1). Each trial keeps its own sandbox and HOME.",
+    )
     p_run.add_argument("--title", default=None, help="Experiment title.")
     p_run.add_argument("--db", default=".skill-arena/arena.sqlite", help="SQLite database path.")
     p_run.add_argument("--html-out", default=None, help="Optional path to export single-file HTML report.")
@@ -626,6 +708,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        if int(args.workers) < 1 or int(args.reps) < 1:
+            print(
+                "错误：`--workers` 与 `--reps` 必须至少为 1。" if is_zh else "Error: `--workers` and `--reps` must be at least 1.",
+                file=sys.stderr,
+            )
+            return 2
         if args.budget_usd is not None and float(args.budget_usd) <= 0.0:
             msg = (
                 f"错误：`--budget-usd` 必须大于 0（收到 {args.budget_usd}）。"
@@ -771,6 +859,8 @@ def main(argv: list[str] | None = None) -> int:
                 relay_script=args.relay_script,
                 budget_usd=args.budget_usd,
                 pass_env=validated_pass_env,
+                seed=int(args.seed),
+                workers=int(args.workers),
             )
         except (ValueError, PermissionError, RuntimeError) as exc:
             print(f"{'错误' if is_zh else 'Error'}: {exc}", file=sys.stderr)

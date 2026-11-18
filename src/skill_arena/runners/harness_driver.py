@@ -12,6 +12,7 @@ import pwd
 import re
 import shutil
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -426,8 +427,12 @@ class HarnessDriver:
         relay_script: str | Path | None = None,
         budget_usd: float | None = None,
         pass_env: list[str] | tuple[str, ...] | None = None,
+        tell_agent_time_limit: bool = True,
     ) -> None:
         self.pool = pool
+        self.tell_agent_time_limit = bool(tell_agent_time_limit)
+        # Trials may run on several threads; spend and trial counters are only touched under this lock.
+        self._accounting_lock = threading.Lock()
         self.upstream_api_url = upstream_api_url
         self.allow_unisolated_host_home = allow_unisolated_host_home
         self.isolate_home = isolate_home
@@ -440,17 +445,25 @@ class HarnessDriver:
         self.completed_trials: int = 0
         self.budget_stopped: bool = False
 
-    def can_start_next_trial(self) -> tuple[bool, float | None]:
-        """Check whether another trial can start without exceeding experiment-wide `budget_usd`."""
+    def can_start_next_trial(self, in_flight: int = 0) -> tuple[bool, float | None]:
+        """Check whether another trial can start without exceeding experiment-wide `budget_usd`.
+
+        ``in_flight`` trials that are still running are assumed to cost as much as the most expensive
+        finished trial, so parallel workers do not launch more than the remaining budget can pay for.
+        """
         if self.budget_usd is None:
             return (True, None)
-        remaining = float(self.budget_usd) - self.cumulative_cost_usd
-        if remaining <= 1e-9 or (
-            self.max_observed_trial_cost > 0.0 and remaining + 1e-9 < self.max_observed_trial_cost
-        ):
-            self.budget_stopped = True
-            return (False, max(0.0, remaining))
-        return (True, max(0.0, remaining))
+        with self._accounting_lock:
+            remaining = float(self.budget_usd) - self.cumulative_cost_usd
+            reserved = max(0, int(in_flight)) * self.max_observed_trial_cost
+            available = remaining - reserved
+            if remaining <= 1e-9 or available <= 1e-9 and in_flight > 0 or (
+                self.max_observed_trial_cost > 0.0 and available + 1e-9 < self.max_observed_trial_cost
+            ):
+                self.budget_stopped = True
+                return (False, max(0.0, remaining))
+            self.budget_stopped = False
+            return (True, max(0.0, remaining))
 
     def run_trial(
         self,
@@ -458,6 +471,7 @@ class HarnessDriver:
         task: TaskSpec,
         contender: ContenderConfig,
         rep_index: int,
+        launch_index: int = -1,
     ) -> TrialResult:
         base_cli = contender.cli.split(":", 1)[0]
         if base_cli == "mock":
@@ -510,11 +524,12 @@ class HarnessDriver:
                 usage, steps = self._execute_simulated_contender(handle, task, contender, mount_report, rep_index)
                 run_info = AgentRunInfo(wall_ms=int(usage.total_latency_ms))
             else:
-                remaining_budget = (
-                    max(0.0, float(self.budget_usd) - self.cumulative_cost_usd)
-                    if self.budget_usd is not None
-                    else None
-                )
+                with self._accounting_lock:
+                    remaining_budget = (
+                        max(0.0, float(self.budget_usd) - self.cumulative_cost_usd)
+                        if self.budget_usd is not None
+                        else None
+                    )
                 usage, steps, exec_outcome, run_info = self._execute_real_cli(
                     handle,
                     task,
@@ -528,10 +543,11 @@ class HarnessDriver:
                 float(usage.total_cost_usd or 0.0),
                 float(usage.relay_cost_usd or 0.0),
             )
-            self.completed_trials += 1
-            self.cumulative_cost_usd = round(self.cumulative_cost_usd + trial_effective_cost, 6)
-            if trial_effective_cost > self.max_observed_trial_cost:
-                self.max_observed_trial_cost = trial_effective_cost
+            with self._accounting_lock:
+                self.completed_trials += 1
+                self.cumulative_cost_usd = round(self.cumulative_cost_usd + trial_effective_cost, 6)
+                if trial_effective_cost > self.max_observed_trial_cost:
+                    self.max_observed_trial_cost = trial_effective_cost
 
             try:
                 verdict, git_diff = evaluate_sandbox(
@@ -596,6 +612,7 @@ class HarnessDriver:
                 started_at=started_at,
                 finished_at=finished_at,
                 is_simulated=is_simulated,
+                launch_index=int(launch_index),
                 agent_wall_ms=run_info.wall_ms,
             )
         finally:
