@@ -395,6 +395,57 @@ def compute_pass_at_time(
     return curve, full_limit
 
 
+def _task_variant(task_id: str) -> str:
+    return task_id.rsplit("@", 1)[1] if "@" in task_id else ""
+
+
+def compute_group_breakdown(
+    control_id: str | None,
+    treatment_id: str | None,
+    treatment_label: str | None,
+    ctrl_trials: list[TrialResult],
+    treat_trials: list[TrialResult],
+) -> list[dict[str, Any]]:
+    """Task-paired Pass@1 delta per task category (and per pool variant when tasks carry one).
+
+    The CI is the same task-paired interval as the headline comparison, computed on the tasks of
+    the group only; with fewer than 2 tasks it is not reported (``ci_low`` / ``ci_high`` None).
+    """
+    groupings: list[tuple[str, Any]] = [("category", lambda t: t.task_category)]
+    if any(_task_variant(t.task_id) for t in [*ctrl_trials, *treat_trials]):
+        groupings.append(("variant", lambda t: _task_variant(t.task_id) or "none"))
+    out: list[dict[str, Any]] = []
+    for by, key_fn in groupings:
+        keys = sorted({key_fn(t) for t in [*ctrl_trials, *treat_trials]})
+        for key in keys:
+            c_sub = [t for t in ctrl_trials if key_fn(t) == key]
+            t_sub = [t for t in treat_trials if key_fn(t) == key]
+            rows = _paired_rows(c_sub, t_sub)
+            if not rows:
+                continue
+            comp = compute_paired_task_comparison(
+                control_id=control_id,
+                treatment_id=treatment_id,
+                per_task=[r[1:] for r in rows],
+            )
+            has_ci = len(rows) >= 2
+            out.append(
+                {
+                    "by": by,
+                    "group": key,
+                    "treatment_id": treatment_id,
+                    "treatment_label": treatment_label,
+                    "tasks_paired": len(rows),
+                    "control_rate": comp["control_rate"],
+                    "treatment_rate": comp["treatment_rate"],
+                    "delta_pass_rate": comp["delta_pass_rate"],
+                    "ci_low": comp["ci_low"] if has_ci else None,
+                    "ci_high": comp["ci_high"] if has_ci else None,
+                }
+            )
+    return out
+
+
 class ArenaDatabase:
     """Zero-dependency SQLite WAL store for SkillArena experiments and trajectories."""
 
@@ -827,6 +878,7 @@ class ArenaDatabase:
         ctrl_cid_for_stats = ctrl_summary.contender_id if ctrl_summary else None
         ctrl_stat_trials = by_contender.get(ctrl_cid_for_stats or "", [])
         comparisons: list[dict[str, Any]] = []
+        category_breakdown: list[dict[str, Any]] = []
         for treat_summary in treat_summaries or [None]:
             treat_cid = treat_summary.contender_id if treat_summary else None
             comp = compare_arms(
@@ -837,6 +889,16 @@ class ArenaDatabase:
             )
             comp["treatment_label"] = treat_summary.label if treat_summary else None
             comp["control_label"] = ctrl_summary.label if ctrl_summary else None
+            if treat_cid is not None:
+                category_breakdown.extend(
+                    compute_group_breakdown(
+                        ctrl_cid_for_stats,
+                        treat_cid,
+                        comp["treatment_label"],
+                        ctrl_stat_trials,
+                        by_contender.get(treat_cid, []),
+                    )
+                )
             comp["is_simulated"] = exp_is_simulated
             if exp_is_simulated:
                 comp["verdict_label_zh"] = f"[SIMULATED | 模拟] {comp['verdict_label_zh']}"
@@ -972,5 +1034,6 @@ class ArenaDatabase:
             "trials": [tr.to_dict() for tr in trials],
             "statistical_comparison": stat_comp,
             "comparisons": comparisons,
+            "category_breakdown": category_breakdown,
             "task_matrix": task_matrix,
         }

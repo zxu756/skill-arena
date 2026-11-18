@@ -183,9 +183,43 @@ def _behavior_block(report: dict[str, Any], is_zh: bool) -> str:
     return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body) + f'<p class="analysis-foot">{_esc(foot)}</p>'
 
 
+def _category_block(report: dict[str, Any], is_zh: bool) -> str:
+    groups = list(report.get("category_breakdown") or [])
+    if not groups:
+        return ""
+    headers = (
+        ["实验组", "分组", "配对题数", "对照组 Pass@1", "实验组 Pass@1", "差值", "95% 区间"]
+        if is_zh
+        else ["Treatment", "Group", "Paired tasks", "Control Pass@1", "Treatment Pass@1", "Delta", "95% CI"]
+    )
+    by_txt = {"category": ("类别", "category"), "variant": ("测试可见性", "variant")}
+    body = []
+    for g in groups:
+        by_lbl = by_txt.get(str(g.get("by")), (str(g.get("by")), str(g.get("by"))))[0 if is_zh else 1]
+        ci = (
+            f"[{_pp(g.get('ci_low'))}, {_pp(g.get('ci_high'))}]"
+            if g.get("ci_low") is not None
+            else ("n/a（少于 2 道题）" if is_zh else "n/a (< 2 tasks)")
+        )
+        body.append(
+            [
+                str(g.get("treatment_label") or g.get("treatment_id") or ""),
+                f"{by_lbl}: {g.get('group')}",
+                str(int(g.get("tasks_paired", 0))),
+                _pct(g.get("control_rate")),
+                _pct(g.get("treatment_rate")),
+                _pp(g.get("delta_pass_rate")),
+                ci,
+            ]
+        )
+    title = "分类别差值（按题配对）" if is_zh else "Per-category delta (task-paired)"
+    return f'<h3 class="analysis-h">{_esc(title)}</h3>' + _table(headers, body)
+
+
 def _blocks(report: dict[str, Any], is_zh: bool) -> list[str]:
     return [
         _comparisons_block(report, is_zh),
+        _category_block(report, is_zh),
         _failure_block(report, is_zh),
         _time_curve_block(report, is_zh),
         _agent_tests_block(report, is_zh),

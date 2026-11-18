@@ -521,6 +521,20 @@ def _print_design_analysis(report: dict, lang: str = "en") -> None:
                     f"{lbl}: delta {d_pp:+.1f} pp, 95% CI [{lo_pp:+.1f}, {hi_pp:+.1f}] pp, "
                     f"p={p_raw:.4f}, Holm p={p_holm:.4f} ({int(comp.get('tasks_paired', 0))} tasks) | {verdict}"
                 )
+    breakdown = list(report.get("category_breakdown") or [])
+    if breakdown:
+        print("\n--- 分类别差值（按题配对）---" if is_zh else "\n--- Per-category delta (task-paired) ---")
+        for g in breakdown:
+            ci_txt = (
+                f"[{float(g['ci_low']) * 100:+.1f}, {float(g['ci_high']) * 100:+.1f}] pp"
+                if g.get("ci_low") is not None
+                else ("区间 n/a（少于 2 道题）" if is_zh else "CI n/a (< 2 tasks)")
+            )
+            print(
+                f"{str(g.get('treatment_label') or '')[:32]} | {g['by']}={g['group']}: "
+                f"{float(g['delta_pass_rate']) * 100:+.1f} pp {ci_txt} ({int(g['tasks_paired'])} "
+                f"{'道题' if is_zh else 'tasks'})"
+            )
     print("\n--- 失败原因（每组试验数）---" if is_zh else "\n--- Failure categories (trials per arm) ---")
     kinds = list(FAILURE_KIND_ZH)
     for row in rows:
