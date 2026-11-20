@@ -1,4 +1,4 @@
-"""End-to-end verification runner coordinating clean clone, build/test, README replay, cleanup, and reporting."""
+"""End-to-end verification runner coordinating clean clone, build/test, README replay, mutation, wording audit, cleanup, and reporting."""
 
 from __future__ import annotations
 
@@ -18,10 +18,14 @@ from skill_arena.verifier.env_guard import (
     clone_clean_repo,
     create_verify_workspace,
     repo_fingerprint,
+    sandbox_exec_available,
+    snapshot_uv_cache_entries,
     validate_git_repo_and_resolve_ref,
 )
+from skill_arena.verifier.mutator import MutationRecord, MutationSummary, run_mutation_verification
 from skill_arena.verifier.readme_replay import ReadmeReplaySummary, replay_root_readmes
 from skill_arena.verifier.report import PathScrubber, VerifyReport
+from skill_arena.verifier.wording_audit import WordingAuditSummary, audit_self_report_file
 
 
 @dataclass(slots=True)
@@ -70,13 +74,103 @@ def _serialize_step(step: StepExecutionRecord, scrubber: PathScrubber) -> dict[s
     return payload
 
 
+def _serialize_mutation_record(rec: MutationRecord, scrubber: PathScrubber) -> dict[str, Any]:
+    return {
+        "index": rec.index,
+        "language": rec.language,
+        "file": rec.file,
+        "line_no": rec.line_no,
+        "col_offset": rec.col_offset,
+        "operator": rec.operator,
+        "description": scrubber.scrub(rec.description, scrub_inline_timings=False),
+        "test_command": scrubber.scrub_command(rec.test_command),
+        "verdict": rec.verdict,
+        "mutated_exit_code": rec.mutated_exit_code,
+        "mutated_output_summary": scrubber.scrub(rec.mutated_output_summary),
+        "restored_tests_passed": rec.restored_tests_passed,
+        "restored_exit_code": rec.restored_exit_code,
+        "worktree_clean": rec.worktree_clean,
+        "leaked_process_count": rec.leaked_process_count,
+        "reason": scrubber.scrub(rec.reason),
+    }
+
+
+def _run_self_report_only(sr_path: Path, options: VerifyOptions) -> tuple[int, VerifyReport, None]:
+    is_zh = options.lang == "zh"
+    started_iso = datetime.now(timezone.utc).isoformat()
+    t0 = time.monotonic()
+
+    scrubber = PathScrubber()
+    sr_summary: WordingAuditSummary = audit_self_report_file(sr_path, scrubber=scrubber, lang=options.lang)
+    finished_iso = datetime.now(timezone.utc).isoformat()
+    total_wall_ms = int(round((time.monotonic() - t0) * 1000))
+
+    failures: list[str] = []
+    for finding in sr_summary.items:
+        if finding.verdict == "UNSUPPORTED":
+            words_joined = ", ".join(finding.matched_words)
+            failures.append(f"{finding.file}:L{finding.line_no} [{words_joined}] -> {finding.reason}")
+
+    exit_code = 1 if failures else 0
+    conclusion = "FAIL" if failures else "PASS"
+
+    skipped_reason = "仅核查自报文档（未传 `--repo`）" if is_zh else "Self-report audit only (`--repo` not specified)"
+    report = VerifyReport(
+        repo_name=sr_path.name,
+        ref="N/A",
+        commit_sha="N/A",
+        conclusion=conclusion,
+        exit_code=exit_code,
+        env_guard={"status": "SKIPPED", "reason": skipped_reason},
+        build_and_test={
+            "build": {"name": "build", "command": None, "status": "SKIPPED", "exit_code": None, "reason": skipped_reason, "output_summary": ""},
+            "test": {"name": "test", "command": None, "status": "SKIPPED", "exit_code": None, "reason": skipped_reason, "output_summary": "", "zero_tests_ran": False},
+        },
+        readme_replay={
+            "status": "SKIPPED",
+            "discovered_readmes": [],
+            "bilingual_parity": {"status": "N/A", "reason": skipped_reason},
+            "fenced_block_count": 0,
+            "shell_block_count": 0,
+            "non_command_block_count": 0,
+            "skip_cmd_patterns": [],
+            "exempted_commands": [],
+            "summary_counts": {
+                "total_commands": 0,
+                "executed_pass": 0,
+                "executed_fail": 0,
+                "unverifiable": 0,
+                "skipped_user": 0,
+                "skipped_parity_duplicate": 0,
+            },
+            "items": [],
+        },
+        mutation={
+            "enabled": False,
+            "status": "SKIPPED",
+            "max_mutations": options.max_mutations,
+            "reason": skipped_reason,
+            "items": [],
+        },
+        self_report=sr_summary.to_dict(),
+        failures=failures,
+        timing_meta={
+            "started_at": started_iso,
+            "finished_at": finished_iso,
+            "total_wall_ms": total_wall_ms,
+            "self_report_wall_ms": sr_summary.wall_ms,
+        },
+    )
+    return exit_code, report, None
+
+
 def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | None]:
-    """Execute repository verification and return `(exit_code, report_or_none, cli_error_message_or_none)`.
+    """Execute repository and/or self-report verification and return `(exit_code, report, error_msg)`.
 
     Exit codes:
       - `0`: all enabled verification gates passed
       - `1`: one or more verification gates failed
-      - `2`: invalid arguments, Stage-2 unimplemented flags, non-Git target, or source fingerprint mismatch
+      - `2`: invalid arguments, missing self-report file, non-Git target, or source fingerprint mismatch
     """
     is_zh = options.lang == "zh"
 
@@ -96,30 +190,30 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
         )
         return 2, None, msg
 
+    sr_path: Path | None = None
     if options.self_report is not None:
+        expanded_sr = options.self_report.expanduser()
+        if not expanded_sr.exists() or not expanded_sr.is_file():
+            msg = (
+                f"错误：自报文件不存在或不是普通文件：{options.self_report}"
+                if is_zh
+                else f"Error: self-report path does not exist or is not a regular file: {options.self_report}"
+            )
+            return 2, None, msg
+        sr_path = expanded_sr.resolve()
+
+    if options.repo is None and sr_path is None:
         msg = (
-            "错误：自报用语检查（`--self-report`）将在 M2 第 2 段实现；当前第 1 段不支持该参数。"
+            "错误：必须传入 `--repo <路径>` 或 `--self-report <md>`。"
             if is_zh
-            else "Error: self-report wording audit (`--self-report`) is scheduled for M2 Stage 2 (not implemented yet)."
+            else "Error: either `--repo <path>` or `--self-report <md>` is required."
         )
         return 2, None, msg
 
-    if options.repo is None:
-        msg = (
-            "错误：必须传入 `--repo <路径>`（或在第 2 段支持后传入 `--self-report`）。"
-            if is_zh
-            else "Error: `--repo <path>` is required."
-        )
-        return 2, None, msg
+    if options.repo is None and sr_path is not None:
+        return _run_self_report_only(sr_path, options)
 
-    if options.mutate:
-        msg = (
-            "错误：破坏性变异反证（`--mutate`）将在 M2 第 2 段实现；第 1 段请显式传入 `--no-mutate`。"
-            if is_zh
-            else "Error: mutation verification (`--mutate`) is scheduled for M2 Stage 2; pass `--no-mutate` in Stage 1."
-        )
-        return 2, None, msg
-
+    assert options.repo is not None
     try:
         src_repo, commit_sha = validate_git_repo_and_resolve_ref(options.repo, options.ref)
         pre_fp: RepoFingerprint = repo_fingerprint(src_repo)
@@ -128,6 +222,7 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
 
     started_iso = datetime.now(timezone.utc).isoformat()
     t_start = time.monotonic()
+    pre_uv_entries = snapshot_uv_cache_entries()
 
     workspace: VerifyWorkspace = create_verify_workspace()
     scrubber = PathScrubber(
@@ -143,6 +238,7 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
     build_rec: StepExecutionRecord | None = None
     test_rec: StepExecutionRecord | None = None
     replay_summary: ReadmeReplaySummary | None = None
+    mut_summary: MutationSummary | None = None
     all_leaked_raw: list[dict[str, Any]] = []
     all_reaped_pids: list[int] = []
     temp_deleted = False
@@ -193,8 +289,46 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
             for item in r_sum.items:
                 all_leaked_raw.extend(item.leaked_processes)
                 all_reaped_pids.extend(item.reaped_pids)
+
+            if options.mutate:
+                if b_rec.status == "FAIL" or t_rec.status != "PASS":
+                    mut_summary = MutationSummary(
+                        enabled=True,
+                        status="SKIPPED",
+                        max_mutations=options.max_mutations,
+                        evaluated_count=0,
+                        killed_count=0,
+                        survived_count=0,
+                        invalid_skipped_count=0,
+                        reason=(
+                            "因构建或基线测试未通过，跳过变异反证"
+                            if is_zh
+                            else "Skipped mutation verification because build or baseline tests failed"
+                        ),
+                    )
+                else:
+                    m_sum = run_mutation_verification(
+                        workspace.repo_dir,
+                        iso_env,
+                        max_mutations=options.max_mutations,
+                        build_cmd_override=options.build_cmd,
+                        test_cmd_override=options.test_cmd,
+                        timeout_sec=options.timeout_sec,
+                        lang=options.lang,
+                    )
+                    mut_summary = m_sum
+                    for m_rec in m_sum.items:
+                        all_leaked_raw.extend(m_rec.leaked_processes)
+                        all_reaped_pids.extend(m_rec.reaped_pids)
     finally:
         temp_deleted = cleanup_temp_workspace(workspace.tmp_base)
+
+    post_uv_entries = snapshot_uv_cache_entries()
+    uv_cache_new_count = len(post_uv_entries - pre_uv_entries)
+
+    sr_summary: WordingAuditSummary | None = None
+    if sr_path is not None:
+        sr_summary = audit_self_report_file(sr_path, scrubber=scrubber, lang=options.lang)
 
     post_fp: RepoFingerprint = repo_fingerprint(src_repo)
     source_untouched = pre_fp == post_fp
@@ -259,6 +393,78 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
                     )
                 )
 
+    if not options.mutate:
+        mutation_dict: dict[str, Any] = {
+            "enabled": False,
+            "status": "SKIPPED",
+            "max_mutations": options.max_mutations,
+            "evaluated_count": 0,
+            "killed_count": 0,
+            "survived_count": 0,
+            "invalid_skipped_count": 0,
+            "reason": (
+                "已通过 `--no-mutate` 显式关闭"
+                if is_zh
+                else "Disabled via `--no-mutate`"
+            ),
+            "items": [],
+        }
+        mutation_wall_ms = 0
+    elif mut_summary is None:
+        mutation_dict = {
+            "enabled": True,
+            "status": "FAIL",
+            "max_mutations": options.max_mutations,
+            "evaluated_count": 0,
+            "killed_count": 0,
+            "survived_count": 0,
+            "invalid_skipped_count": 0,
+            "reason": clone_failed_msg or ("因克隆失败未执行" if is_zh else "Blocked by clone failure"),
+            "items": [],
+        }
+        mutation_wall_ms = 0
+    else:
+        mutation_wall_ms = mut_summary.wall_ms
+        serialized_mut_items = [_serialize_mutation_record(r, scrubber) for r in mut_summary.items]
+        mutation_dict = {
+            "enabled": True,
+            "status": mut_summary.status,
+            "max_mutations": mut_summary.max_mutations,
+            "evaluated_count": mut_summary.evaluated_count,
+            "killed_count": mut_summary.killed_count,
+            "survived_count": mut_summary.survived_count,
+            "invalid_skipped_count": mut_summary.invalid_skipped_count,
+            "reason": scrubber.scrub(mut_summary.reason),
+            "items": serialized_mut_items,
+        }
+        if mut_summary.status == "FAIL":
+            added_mut_failure = False
+            for m_rec in mut_summary.items:
+                if m_rec.verdict == "SURVIVED" or not m_rec.restored_tests_passed or not m_rec.worktree_clean:
+                    failures.append(
+                        scrubber.scrub(
+                            f"mutation {m_rec.file}:L{m_rec.line_no} ({m_rec.description}) -> {m_rec.reason}"
+                        )
+                    )
+                    added_mut_failure = True
+            if not added_mut_failure:
+                failures.append(f"mutation: {scrubber.scrub(mut_summary.reason)}")
+
+    if sr_summary is None:
+        self_report_dict: dict[str, Any] = {
+            "enabled": False,
+            "status": "SKIPPED",
+            "items": [],
+        }
+        self_report_wall_ms = 0
+    else:
+        self_report_dict = sr_summary.to_dict()
+        self_report_wall_ms = sr_summary.wall_ms
+        for finding in sr_summary.items:
+            if finding.verdict == "UNSUPPORTED":
+                words_joined = ", ".join(finding.matched_words)
+                failures.append(f"{finding.file}:L{finding.line_no} [{words_joined}] -> {finding.reason}")
+
     scrubbed_leaks = _scrub_leaked_records(all_leaked_raw, scrubber)
     no_leaked = len(scrubbed_leaks) == 0
     if not no_leaked:
@@ -269,9 +475,14 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
         )
 
     env_guard_ok = source_untouched and temp_deleted and no_leaked
+    sb_enabled = sandbox_exec_available()
     env_guard_dict: dict[str, Any] = {
         "status": "PASS" if env_guard_ok else "FAIL",
         "clone_method": "git clone --no-local",
+        "sandbox_exec_enabled": sb_enabled,
+        "network_policy": "sandbox_exec_loopback_only" if sb_enabled else "env_offline_only",
+        "home_write_policy": "deny_real_home_allow_uv_cache" if sb_enabled else "env_isolated_home_only",
+        "shared_uv_cache": "<USER_HOME>/.cache/uv",
         "pre_fingerprint": pre_fp.short_digest(),
         "post_fingerprint": post_fp.short_digest(),
         "source_repo_untouched": source_untouched,
@@ -359,22 +570,8 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
             "test": _serialize_step(test_rec, scrubber),
         },
         readme_replay=readme_dict,
-        mutation={
-            "enabled": False,
-            "status": "SKIPPED",
-            "max_mutations": options.max_mutations,
-            "reason": (
-                "已通过 `--no-mutate` 显式关闭（变异反证将在第 2 段实现）"
-                if is_zh
-                else "Disabled via `--no-mutate` (mutation verification is scheduled for Stage 2)"
-            ),
-            "items": [],
-        },
-        self_report={
-            "enabled": False,
-            "status": "SKIPPED",
-            "items": [],
-        },
+        mutation=mutation_dict,
+        self_report=self_report_dict,
         failures=failures,
         timing_meta={
             "started_at": started_iso,
@@ -384,6 +581,9 @@ def run_verify(options: VerifyOptions) -> tuple[int, VerifyReport | None, str | 
             "build_wall_ms": build_rec.wall_ms,
             "test_wall_ms": test_rec.wall_ms,
             "replay_wall_ms": replay_summary.wall_ms,
+            "mutation_wall_ms": mutation_wall_ms,
+            "self_report_wall_ms": self_report_wall_ms,
+            "uv_cache_new_entries": uv_cache_new_count,
             "command_timings_ms": cmd_timings,
             "reaped_pids": sorted(set(all_reaped_pids)),
         },

@@ -1142,24 +1142,26 @@ def main(argv: list[str] | None = None) -> int:
 
         if not args.md_out and not args.json_out:
             print(md_text, end="")
+        elif v_report.env_guard.get("status") == "SKIPPED":
+            sr_counts = v_report.self_report.get("summary_counts", {})
+            print(
+                f"[verify] self-report {v_report.repo_name} -> {v_report.conclusion} "
+                f"(unsupported={sr_counts.get('unsupported', 0)}, "
+                f"supported={sr_counts.get('supported', 0)}, "
+                f"denoised={sr_counts.get('denoised', 0)})"
+            )
         else:
             counts = v_report.readme_replay["summary_counts"]
-            if is_zh:
-                print(
-                    f"[verify] {v_report.repo_name} @ {v_report.commit_sha[:12]} -> {v_report.conclusion} "
-                    f"(build={v_report.build_and_test['build']['status']}, "
-                    f"test={v_report.build_and_test['test']['status']}, "
-                    f"readme={counts['executed_pass']} pass / {counts['executed_fail']} fail / "
-                    f"{counts['unverifiable']} unverifiable)"
-                )
-            else:
-                print(
-                    f"[verify] {v_report.repo_name} @ {v_report.commit_sha[:12]} -> {v_report.conclusion} "
-                    f"(build={v_report.build_and_test['build']['status']}, "
-                    f"test={v_report.build_and_test['test']['status']}, "
-                    f"readme={counts['executed_pass']} pass / {counts['executed_fail']} fail / "
-                    f"{counts['unverifiable']} unverifiable)"
-                )
+            mut_part = f", mutate={v_report.mutation['status']}"
+            if v_report.self_report.get("enabled"):
+                mut_part += f", self_report={v_report.self_report['status']}"
+            print(
+                f"[verify] {v_report.repo_name} @ {v_report.commit_sha[:12]} -> {v_report.conclusion} "
+                f"(build={v_report.build_and_test['build']['status']}, "
+                f"test={v_report.build_and_test['test']['status']}, "
+                f"readme={counts['executed_pass']} pass / {counts['executed_fail']} fail / "
+                f"{counts['unverifiable']} unverifiable{mut_part})"
+            )
         return rc
 
     return 1

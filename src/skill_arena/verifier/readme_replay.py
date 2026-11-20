@@ -22,7 +22,8 @@ _LANG_FLAG_NORM_RE = re.compile(r"--lang(?:=|\s+)(?:en|zh|zh-CN|en-US)\b", re.IG
 # Static classification regexes (project-agnostic)
 _CREDENTIAL_ASSIGN_RE = re.compile(
     r"(?:^|[;\s]|export\s+)[A-Za-z0-9_]*(?:API_KEY|SECRET|ACCESS_TOKEN|AUTH_TOKEN|PRIVATE_KEY)\s*=|"
-    r"(?:^|[;\s])(?:source|\.)\s+(?:\./)?\.env\b",
+    r"(?:^|[;\s])(?:source|\.)\s+(?:\./)?\.env\b|"
+    r"\$\{[A-Za-z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*:\?[^}]*\}",
     re.IGNORECASE,
 )
 _COMMENT_NEEDS_KEY_RE = re.compile(

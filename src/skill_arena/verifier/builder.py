@@ -124,7 +124,7 @@ def detect_build_and_test_commands(repo_dir: Path) -> tuple[str | None, str | No
         return build_cmd, test_cmd
 
     if (repo_dir / "Package.swift").is_file():
-        return "swift build", "swift test"
+        return "swift build --disable-sandbox", "swift test --disable-sandbox"
 
     if (repo_dir / "Cargo.toml").is_file():
         return "cargo build --offline", "cargo test --offline"
@@ -159,7 +159,12 @@ def detect_zero_tests_ran(test_command: str, exit_code: int, combined_out: str) 
         return True
     if _PYTEST_ZERO_RE.search(combined_out):
         return True
-    if _SWIFT_ZERO_RE.search(combined_out):
+
+    m_swift_all = _SWIFT_RAN_RE.findall(combined_out)
+    if m_swift_all:
+        if sum(int(a or b) for a, b in m_swift_all) == 0:
+            return True
+    elif _SWIFT_ZERO_RE.search(combined_out):
         return True
 
     cmd_lower = test_command.lower()

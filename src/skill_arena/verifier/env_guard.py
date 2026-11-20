@@ -79,6 +79,75 @@ def _real_account_home() -> Path:
     return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
+def _sb_escape(path_str: str) -> str:
+    return path_str.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def sandbox_exec_available() -> bool:
+    """Return True when macOS `/usr/bin/sandbox-exec` is available for kernel-level network/HOME isolation."""
+    return sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file()
+
+
+def build_verifier_sandbox_profile() -> str:
+    """Build macOS Seatbelt `(version 1)` profile blocking external network and real-HOME writes.
+
+    Rules:
+      1. Network: `(deny network*)`, allowing ONLY Unix domain sockets and `localhost` loopback
+         (`network-bind`/`network-inbound` on `localhost:*` and `network-outbound` ONLY to `remote ip "localhost:*"`
+         so unbound outbound client sockets cannot escape to LAN/Internet).
+      2. Real account home (`pwd.getpwuid(os.getuid()).pw_dir`): `(deny file-write* (subpath "<HOME>"))`,
+         allowing writes ONLY to shared `~/.cache/uv` (P7) plus standard temp/device paths (`/tmp`, `/private/tmp`,
+         `/var/folders`, `/private/var/folders`, `/dev`).
+    """
+    raw_home = str(_real_account_home())
+    real_home = os.path.realpath(raw_home)
+    homes: list[str] = []
+    for candidate in (raw_home, real_home):
+        if candidate and candidate != "/" and candidate not in homes:
+            homes.append(candidate)
+
+    clauses = [
+        "(version 1)",
+        "(allow default)",
+        "(deny network*)",
+        "(allow network* (local unix))",
+        "(allow network* (remote unix))",
+        '(allow network-bind (local ip "localhost:*"))',
+        '(allow network-inbound (local ip "localhost:*"))',
+        '(allow network-outbound (remote ip "localhost:*"))',
+    ]
+    for home_str in homes:
+        clauses.append(f'(deny file-write* (subpath "{_sb_escape(home_str)}"))')
+    for home_str in homes:
+        clauses.append(f'(allow file-write* (subpath "{_sb_escape(home_str)}/.cache/uv"))')
+    for sys_writable in ("/private/tmp", "/tmp", "/private/var/folders", "/var/folders", "/dev"):
+        clauses.append(f'(allow file-write* (subpath "{sys_writable}"))')
+    return "".join(clauses)
+
+
+def snapshot_uv_cache_entries(uv_cache_dir: Path | None = None, max_depth: int = 3) -> set[str]:
+    """Capture bounded relative entry paths under `~/.cache/uv` (up to `max_depth`) to count newly added cache entries."""
+    root = uv_cache_dir if uv_cache_dir is not None else (_real_account_home() / ".cache" / "uv")
+    if not root.is_dir():
+        return set()
+    root_str = str(root)
+    entries: set[str] = set()
+
+    def _scan(cur_dir: str, depth: int) -> None:
+        try:
+            with os.scandir(cur_dir) as iterator:
+                for entry in iterator:
+                    rel = entry.path[len(root_str) + 1 :]
+                    entries.add(rel)
+                    if depth < max_depth and entry.is_dir(follow_symlinks=False):
+                        _scan(entry.path, depth + 1)
+        except OSError:
+            return
+
+    _scan(root_str, 1)
+    return entries
+
+
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -265,6 +334,8 @@ def build_isolated_verify_env(workspace: VerifyWorkspace) -> dict[str, str]:
         "UV_NO_PROGRESS": "1",
         "UV_TOOL_DIR": str(workspace.home_dir / ".local" / "share" / "uv" / "tools"),
         "UV_TOOL_BIN_DIR": str(workspace.home_dir / ".local" / "bin"),
+        "CLANG_MODULE_CACHE_PATH": str(workspace.tmp_dir / "clang-module-cache"),
+        "SWIFTPM_MODULECACHE_OVERRIDE": str(workspace.tmp_dir / "swiftpm-module-cache"),
         "NPM_CONFIG_OFFLINE": "true",
         "CARGO_NET_OFFLINE": "true",
         "GIT_TERMINAL_PROMPT": "0",
@@ -314,11 +385,18 @@ def run_verified_command(
     cwd: Path,
     env: dict[str, str],
     timeout_sec: int = 300,
+    *,
+    use_sandbox_exec: bool = True,
 ) -> CommandRunResult:
-    """Run `argv` via `WorktreeSandboxPool.run_bounded_command_detailed` with strict env isolation and orphan reaping."""
+    """Run `argv` inside `sandbox-exec` (offline + HOME-write guard) via `WorktreeSandboxPool.run_bounded_command_detailed`."""
+    effective_argv = (
+        ["/usr/bin/sandbox-exec", "-p", build_verifier_sandbox_profile(), *argv]
+        if (use_sandbox_exec and sandbox_exec_available())
+        else list(argv)
+    )
     t0 = time.monotonic()
     outcome = WorktreeSandboxPool.run_bounded_command_detailed(
-        argv=argv,
+        argv=effective_argv,
         cwd=cwd,
         env=env,
         timeout_sec=timeout_sec,

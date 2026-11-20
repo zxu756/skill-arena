@@ -18,6 +18,7 @@ _USER_SYSTEM_PATH_RE = re.compile(r"/(?:Users|home)/[^\s/\"':;),\]}]+")
 _INLINE_TIMING_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bin\s+\d+\.\d+\s*\(\d+\.\d+\)\s*seconds\b", re.IGNORECASE), "in <TIME>"),
     (re.compile(r"\bfinished\s+in\s+\d+(?:\.\d+)?s\b", re.IGNORECASE), "finished in <TIME>"),
+    (re.compile(r"\bafter\s+\d+(?:\.\d+)?\s*seconds\b", re.IGNORECASE), "after <TIME>"),
     (re.compile(r"\bin\s+\d+(?:\.\d+)?(?:ms|s)\b(?:\s*\(\d+:\d{2}:\d{2}\))?"), "in <TIME>"),
 )
 
@@ -130,6 +131,43 @@ def _md_escape(cell: str) -> str:
     return cell.replace("|", "\\|").replace("\n", " ")
 
 
+def _render_self_report_section(lines: list[str], sr: dict[str, Any], *, section_num: int, is_zh: bool) -> None:
+    counts = sr.get("summary_counts", {})
+    if is_zh:
+        lines.append(f"## {section_num}. 自报用语核查（`{sr.get('report_file', '')}`）")
+        lines.append(
+            f"- 状态：**{sr['status']}** —— 检出绝对词条目 `{counts.get('total_matched_items', 0)}` 条"
+            f"（无证据 `{counts.get('unsupported', 0)}` 条，有证据 `{counts.get('supported', 0)}` 条，"
+            f"规则去噪跳过 `{counts.get('denoised', 0)}` 条）"
+        )
+        lines.append("")
+        if sr.get("items"):
+            lines.append("| 文件与行号 | 命中词 | 原句摘录 | 判定 | 证据核查说明 |")
+            lines.append("|---|---|---|---|---|")
+    else:
+        lines.append(f"## {section_num}. Self-Report Wording Audit (`{sr.get('report_file', '')}`)")
+        lines.append(
+            f"- Status: **{sr['status']}** — `{counts.get('total_matched_items', 0)}` matched item(s) "
+            f"(`{counts.get('unsupported', 0)}` unsupported, `{counts.get('supported', 0)}` supported, "
+            f"`{counts.get('denoised', 0)}` denoised)"
+        )
+        lines.append("")
+        if sr.get("items"):
+            lines.append("| File & Line | Words | Original Sentence | Verdict | Evidence Detail |")
+            lines.append("|---|---|---|---|---|")
+
+    for item in sr.get("items", []):
+        loc = f"`{item['file']}:L{item['line_no']}`"
+        words_str = ", ".join(f"`{_md_escape(w)}`" for w in item["matched_words"])
+        sent_str = _md_escape(item["sentence"])
+        verdict_label = (
+            ("无证据 (`UNSUPPORTED`)" if item["verdict"] == "UNSUPPORTED" else "有证据 (`SUPPORTED`)")
+            if is_zh
+            else f"`{item['verdict']}`"
+        )
+        lines.append(f"| {loc} | {words_str} | {sent_str} | **{verdict_label}** | {_md_escape(item['reason'])} |")
+
+
 def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
     """Render deterministic path-scrubbed Markdown evidence report (no volatile wall-clock numbers in body)."""
     is_zh = lang == "zh"
@@ -137,8 +175,33 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
     bt = report.build_and_test
     rr = report.readme_replay
     mut = report.mutation
+    sr = report.self_report
 
     lines: list[str] = []
+
+    # Standalone `--self-report` mode (without `--repo`)
+    if eg.get("status") == "SKIPPED":
+        report_file = sr.get("report_file", report.repo_name)
+        if is_zh:
+            lines.append(f"# 自报用语核查报告：`{report_file}`")
+            lines.append("")
+            lines.append(f"- **总结论**：**{report.conclusion}**（退出码 `{report.exit_code}`）")
+        else:
+            lines.append(f"# Self-Report Wording Audit Report: `{report_file}`")
+            lines.append("")
+            lines.append(f"- **Conclusion**: **{report.conclusion}** (exit code `{report.exit_code}`)")
+        lines.append("")
+        _render_self_report_section(lines, sr, section_num=1, is_zh=is_zh)
+        if report.failures:
+            lines.append("")
+            lines.append("## 2. 失败项汇总" if is_zh else "## 2. Failure Summary")
+            for failure in report.failures:
+                lines.append(f"- {failure}")
+        lines.append("")
+        return "\n".join(lines)
+
+    uv_new_entries = report.timing_meta.get("uv_cache_new_entries", 0)
+    sb_active = bool(eg.get("sandbox_exec_enabled", False))
     if is_zh:
         lines.append(f"# 仓库验收报告：`{report.repo_name}` @ `{report.commit_sha[:12]}`")
         lines.append("")
@@ -147,6 +210,14 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
         lines.append("")
         lines.append("## 1. 干净拷贝与环境守卫")
         lines.append(f"- 克隆方式：`{eg['clone_method']}`")
+        if sb_active:
+            lines.append(
+                "- 网络与家目录隔离：`sandbox-exec` 断网回放（仅放行本机 `localhost` 与 Unix 套接字；"
+                "拦写真实家目录，仅放行 `<USER_HOME>/.cache/uv`）"
+            )
+        else:
+            lines.append("- 网络与家目录隔离：离线环境变量隔离（非 macOS 宿主无 `sandbox-exec`）")
+        lines.append(f"- 共用 `uv` 缓存（`<USER_HOME>/.cache/uv`）：本次新增 `{uv_new_entries}` 个条目")
         lines.append(
             f"- 源仓库只读指纹一致：`{eg['source_repo_untouched']}`"
             f"（`{eg['pre_fingerprint']}` == `{eg['post_fingerprint']}`）"
@@ -168,6 +239,14 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
         lines.append("")
         lines.append("## 1. Clean Clone & Environment Guard")
         lines.append(f"- Clone method: `{eg['clone_method']}`")
+        if sb_active:
+            lines.append(
+                "- Network & HOME guard: `sandbox-exec` offline replay (loopback & Unix sockets only; "
+                "real HOME writes blocked except `<USER_HOME>/.cache/uv`)"
+            )
+        else:
+            lines.append("- Network & HOME guard: offline env isolation (`sandbox-exec` unavailable)")
+        lines.append(f"- Shared `uv` cache (`<USER_HOME>/.cache/uv`): `{uv_new_entries}` new entries added")
         lines.append(
             f"- Source repository untouched: `{eg['source_repo_untouched']}`"
             f" (`{eg['pre_fingerprint']}` == `{eg['post_fingerprint']}`)"
@@ -194,6 +273,7 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
     lines.append("")
     if is_zh:
         lines.append("## 3. README 命令逐条回放证据表")
+        lines.append("- 回放模式：`sandbox-exec` 断网回放（禁止外网连接，仅放行本机回环）")
         lines.append(
             f"- 根级 README 文件：{', '.join(f'`{n}`' for n in rr['discovered_readmes']) or '无'}"
         )
@@ -220,6 +300,7 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
         lines.append("|---:|---|---|---|---:|---|---|")
     else:
         lines.append("## 3. README Command Replay Evidence")
+        lines.append("- Replay mode: `sandbox-exec` offline replay (external network blocked, loopback allowed)")
         lines.append(
             f"- Root README files: {', '.join(f'`{n}`' for n in rr['discovered_readmes']) or 'none'}"
         )
@@ -260,13 +341,38 @@ def render_verify_markdown(report: VerifyReport, *, lang: str = "zh") -> str:
     if is_zh:
         lines.append("## 4. 破坏性变异反证")
         lines.append(f"- 状态：**{mut['status']}**（{mut['reason']}）")
+        if mut.get("items"):
+            lines.append("")
+            lines.append("| # | 文件与行号 | 变异算子与改动 | 测试命令 | 改坏后结果 | 还原与工作树校验 |")
+            lines.append("|---:|---|---|---|---|---|")
     else:
         lines.append("## 4. Destructive Mutation Verification")
         lines.append(f"- Status: **{mut['status']}** ({mut['reason']})")
+        if mut.get("items"):
+            lines.append("")
+            lines.append("| # | File & Line | Operator & Mutation | Test Command | Mutated Verdict | Restore & Clean Check |")
+            lines.append("|---:|---|---|---|---|---|")
+
+    for m_item in mut.get("items", []):
+        m_loc = f"`{m_item['file']}:L{m_item['line_no']}`"
+        m_desc = f"`{m_item['operator']}`: {_md_escape(m_item['description'])}"
+        m_cmd = f"`{_md_escape(m_item['test_command'])}`"
+        m_ec = str(m_item["mutated_exit_code"]) if m_item["mutated_exit_code"] is not None else "—"
+        m_verdict = f"**{m_item['verdict']}** (exit={m_ec})"
+        if m_item.get("mutated_output_summary"):
+            m_verdict += f" — `{_md_escape(m_item['mutated_output_summary'])}`"
+        m_restore = f"restored_pass={m_item['restored_tests_passed']}, clean={m_item['worktree_clean']}"
+        lines.append(f"| {m_item['index']} | {m_loc} | {m_desc} | {m_cmd} | {m_verdict} | `{m_restore}` |")
+
+    next_sec = 5
+    if sr.get("enabled"):
+        lines.append("")
+        _render_self_report_section(lines, sr, section_num=next_sec, is_zh=is_zh)
+        next_sec += 1
 
     if report.failures:
         lines.append("")
-        lines.append("## 5. 失败项汇总" if is_zh else "## 5. Failure Summary")
+        lines.append(f"## {next_sec}. 失败项汇总" if is_zh else f"## {next_sec}. Failure Summary")
         for failure in report.failures:
             lines.append(f"- {failure}")
 
