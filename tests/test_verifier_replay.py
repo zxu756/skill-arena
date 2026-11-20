@@ -86,23 +86,36 @@ def test_verify_stage2_flags_do_not_fake_pass(tmp_path: Path, capsys: pytest.Cap
     repo = tmp_path / "demo_repo"
     _init_git_repo(repo, _basic_repo_files())
 
-    # Default (--mutate enabled by default) must not fake-pass in Stage 1
-    rc_default = main(["--lang", "zh", "verify", "--repo", str(repo)])
-    cap_default = capsys.readouterr()
-    assert rc_default == 2
-    assert "第 2 段" in (cap_default.out + cap_default.err)
+    # Default (--mutate enabled by default) runs real mutation check and kills mutation in tool.py
+    j_default = tmp_path / "default_mutate.json"
+    rc_default = main(["--lang", "zh", "verify", "--repo", str(repo), "--json-out", str(j_default)])
+    capsys.readouterr()
+    assert rc_default == 0
+    d_default = json.loads(j_default.read_text(encoding="utf-8"))
+    assert d_default["mutation"]["enabled"] is True
+    assert d_default["mutation"]["status"] == "PASS"
+    assert len(d_default["mutation"]["items"]) == 1
+    assert d_default["mutation"]["items"][0]["verdict"] == "KILLED"
 
-    rc_mutate_en = main(["--lang", "en", "verify", "--repo", str(repo), "--mutate"])
-    cap_mutate_en = capsys.readouterr()
-    assert rc_mutate_en == 2
-    assert "stage 2" in (cap_mutate_en.out + cap_mutate_en.err).lower()
+    j_mutate_en = tmp_path / "explicit_mutate.json"
+    rc_mutate_en = main(["--lang", "en", "verify", "--repo", str(repo), "--mutate", "--json-out", str(j_mutate_en)])
+    capsys.readouterr()
+    assert rc_mutate_en == 0
+    d_mutate_en = json.loads(j_mutate_en.read_text(encoding="utf-8"))
+    assert d_mutate_en["mutation"]["enabled"] is True
+    assert d_mutate_en["mutation"]["status"] == "PASS"
 
+    # Self-report with unsupported absolute claim must fail (exit 1), never fake-pass
     self_report = tmp_path / "self-report.md"
     self_report.write_text("# Report\n全部通过。\n", encoding="utf-8")
-    rc_sr = main(["--lang", "zh", "verify", "--self-report", str(self_report)])
-    cap_sr = capsys.readouterr()
-    assert rc_sr == 2
-    assert "第 2 段" in (cap_sr.out + cap_sr.err)
+    j_sr = tmp_path / "sr.json"
+    rc_sr = main(["--lang", "zh", "verify", "--self-report", str(self_report), "--json-out", str(j_sr)])
+    capsys.readouterr()
+    assert rc_sr == 1
+    d_sr = json.loads(j_sr.read_text(encoding="utf-8"))
+    assert d_sr["conclusion"] == "FAIL"
+    assert d_sr["self_report"]["enabled"] is True
+    assert d_sr["self_report"]["status"] == "FAIL"
 
 
 def test_verify_invalid_inputs_exit_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -508,3 +521,152 @@ def test_two_runs_json_identical_without_timing_meta_and_paths_scrubbed(tmp_path
         assert str(repo) not in txt
         assert real_home not in txt
         assert "sa-verify-" not in txt
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec offline enforcement is macOS-specific")
+def test_readme_replay_blocks_external_network_allows_loopback_and_reports_offline_replay(
+    tmp_path: Path,
+) -> None:
+    files = _basic_repo_files(
+        readme_md=(
+            "# Network Guard Demo\n\n"
+            "```bash\n"
+            "python3 loopback_ok.py\n"
+            "python3 connect_external.py\n"
+            "```\n"
+        )
+    )
+    files["loopback_ok.py"] = (
+        "import socket, threading\n"
+        "srv = socket.socket()\n"
+        "srv.bind(('127.0.0.1', 0))\n"
+        "srv.listen(1)\n"
+        "port = srv.getsockname()[1]\n"
+        "def _serve() -> None:\n"
+        "    conn, _ = srv.accept()\n"
+        "    conn.sendall(b'loopback-pong')\n"
+        "    conn.close()\n"
+        "    srv.close()\n"
+        "t = threading.Thread(target=_serve)\n"
+        "t.start()\n"
+        "cli = socket.create_connection(('127.0.0.1', port), timeout=2.0)\n"
+        "payload = cli.recv(32)\n"
+        "cli.close()\n"
+        "t.join()\n"
+        "assert payload == b'loopback-pong'\n"
+        "print('loopback-ok')\n"
+    )
+    # Connect to a non-loopback address without relying on external DNS or internet availability;
+    # Seatbelt must block outbound non-localhost sockets immediately with EPERM.
+    files["connect_external.py"] = (
+        "import errno, socket, sys\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "s.settimeout(1.5)\n"
+        "try:\n"
+        "    s.connect(('198.51.100.1', 80))\n"
+        "    print('unexpectedly-connected')\n"
+        "    sys.exit(0)\n"
+        "except PermissionError as exc:\n"
+        "    print(f'blocked-by-sandbox:{exc.errno}', file=sys.stderr)\n"
+        "    sys.exit(13)\n"
+        "except OSError as exc:\n"
+        "    if exc.errno == errno.EPERM:\n"
+        "        print(f'blocked-by-sandbox:{exc.errno}', file=sys.stderr)\n"
+        "        sys.exit(13)\n"
+        "    print(f'other-oserror:{exc.errno}:{exc}', file=sys.stderr)\n"
+        "    sys.exit(99)\n"
+        "finally:\n"
+        "    s.close()\n"
+    )
+    repo = tmp_path / "net_guard_repo"
+    _init_git_repo(repo, files)
+
+    json_out = tmp_path / "net_guard.json"
+    md_out = tmp_path / "net_guard.md"
+    rc = main(
+        [
+            "--lang",
+            "zh",
+            "verify",
+            "--repo",
+            str(repo),
+            "--no-mutate",
+            "--json-out",
+            str(json_out),
+            "--md-out",
+            str(md_out),
+        ]
+    )
+    assert rc == 1
+    data = json.loads(json_out.read_text(encoding="utf-8"))
+    md_text = md_out.read_text(encoding="utf-8")
+    assert "断网回放" in md_text
+    assert data["env_guard"]["sandbox_exec_enabled"] is True
+
+    items = {item["command"]: item for item in data["readme_replay"]["items"]}
+    assert items["python3 loopback_ok.py"]["status"] == "PASS"
+    assert items["python3 loopback_ok.py"]["exit_code"] == 0
+    assert items["python3 connect_external.py"]["status"] == "FAIL"
+    assert items["python3 connect_external.py"]["exit_code"] == 13
+    assert "blocked-by-sandbox" in items["python3 connect_external.py"]["output_summary"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec home write guard is macOS-specific")
+def test_readme_replay_blocks_writing_to_real_home_directory_and_tracks_uv_cache(
+    tmp_path: Path,
+) -> None:
+    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    probe_name = f".sa_verify_home_write_probe_{os.getpid()}_{tmp_path.name}"
+    forbidden_path = real_home / probe_name
+    assert not forbidden_path.exists()
+
+    files = _basic_repo_files(
+        readme_md=(
+            "# Home Guard Demo\n\n"
+            "```bash\n"
+            'echo "${API_TOKEN:?need a token}"\n'
+            "python3 write_real_home.py\n"
+            "```\n"
+        )
+    )
+    files["write_real_home.py"] = (
+        "from pathlib import Path\n"
+        f"target = Path({str(forbidden_path)!r})\n"
+        "target.write_text('should-be-blocked', encoding='utf-8')\n"
+    )
+    repo = tmp_path / "home_guard_repo"
+    _init_git_repo(repo, files)
+
+    json_out = tmp_path / "home_guard.json"
+    md_out = tmp_path / "home_guard.md"
+    try:
+        rc = main(
+            [
+                "--lang",
+                "zh",
+                "verify",
+                "--repo",
+                str(repo),
+                "--no-mutate",
+                "--json-out",
+                str(json_out),
+                "--md-out",
+                str(md_out),
+            ]
+        )
+        assert not forbidden_path.exists(), "Subprocess wrote into real account home directory!"
+    finally:
+        if forbidden_path.exists():
+            forbidden_path.unlink()
+
+    assert rc == 1
+    data = json.loads(json_out.read_text(encoding="utf-8"))
+    md_text = md_out.read_text(encoding="utf-8")
+    items = {item["command"]: item for item in data["readme_replay"]["items"]}
+
+    assert items['echo "${API_TOKEN:?need a token}"']["category"] == "UNVERIFIABLE_CREDENTIALS"
+    assert items["python3 write_real_home.py"]["status"] == "FAIL"
+    assert items["python3 write_real_home.py"]["exit_code"] != 0
+    assert isinstance(data["timing_meta"]["uv_cache_new_entries"], int)
+    assert data["timing_meta"]["uv_cache_new_entries"] >= 0
+    assert ".cache/uv" in md_text
