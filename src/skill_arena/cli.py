@@ -759,6 +759,49 @@ def build_parser() -> argparse.ArgumentParser:
     p_studio.add_argument("--host", default="127.0.0.1", help="Bind host.")
     p_studio.add_argument("--port", type=int, default=8765, help="Bind port.")
 
+    p_verify = sub.add_parser(
+        "verify",
+        help="Deterministically verify a Git repository in an isolated clone (build, tests, README replay, report).",
+    )
+    _add_subparser_lang_arg(p_verify)
+    p_verify.add_argument("--repo", default=None, help="Path to target Git repository (read-only).")
+    p_verify.add_argument("--ref", default="HEAD", help="Git commit SHA, tag, or branch to verify (default: HEAD).")
+    p_verify.add_argument("--build-cmd", default=None, help="Explicit build/install command override.")
+    p_verify.add_argument("--test-cmd", default=None, help="Explicit baseline test command override.")
+    p_verify.add_argument(
+        "--mutate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run destructive single-point mutation check (default: enabled; pass --no-mutate to disable).",
+    )
+    p_verify.add_argument(
+        "--max-mutations",
+        type=int,
+        default=1,
+        help="Maximum deterministic source mutations to verify (default: 1).",
+    )
+    p_verify.add_argument(
+        "--self-report",
+        default=None,
+        metavar="MD",
+        help="Optional Markdown self-report file to audit for unsupported absolute claims.",
+    )
+    p_verify.add_argument(
+        "--skip-cmd",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Explicitly exempt matching README command(s) and list them in the report (repeatable).",
+    )
+    p_verify.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=300,
+        help="Per-command execution timeout in seconds (default: 300).",
+    )
+    p_verify.add_argument("--md-out", default=None, help="Optional file path to write Markdown verification report.")
+    p_verify.add_argument("--json-out", default=None, help="Optional file path to write JSON verification report.")
+
     return parser
 
 
@@ -1058,6 +1101,66 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             server.server_close()
         return 0
+
+    if args.command == "verify":
+        from skill_arena.verifier import (
+            VerifyOptions,
+            render_verify_json,
+            render_verify_markdown,
+            run_verify,
+        )
+
+        options = VerifyOptions(
+            repo=Path(args.repo) if args.repo is not None else None,
+            ref=str(args.ref),
+            build_cmd=args.build_cmd,
+            test_cmd=args.test_cmd,
+            mutate=bool(args.mutate),
+            max_mutations=int(args.max_mutations),
+            self_report=Path(args.self_report) if args.self_report is not None else None,
+            skip_cmd=list(args.skip_cmd or []),
+            timeout_sec=int(args.timeout_sec),
+            lang=lang,
+        )
+        rc, v_report, err_msg = run_verify(options)
+        if err_msg is not None or v_report is None:
+            if err_msg:
+                print(err_msg, file=sys.stderr)
+            return rc
+
+        md_text = render_verify_markdown(v_report, lang=lang)
+        json_text = render_verify_json(v_report)
+
+        if args.md_out:
+            md_path = Path(args.md_out)
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text(md_text, encoding="utf-8")
+        if args.json_out:
+            json_path = Path(args.json_out)
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            json_path.write_text(json_text, encoding="utf-8")
+
+        if not args.md_out and not args.json_out:
+            print(md_text, end="")
+        else:
+            counts = v_report.readme_replay["summary_counts"]
+            if is_zh:
+                print(
+                    f"[verify] {v_report.repo_name} @ {v_report.commit_sha[:12]} -> {v_report.conclusion} "
+                    f"(build={v_report.build_and_test['build']['status']}, "
+                    f"test={v_report.build_and_test['test']['status']}, "
+                    f"readme={counts['executed_pass']} pass / {counts['executed_fail']} fail / "
+                    f"{counts['unverifiable']} unverifiable)"
+                )
+            else:
+                print(
+                    f"[verify] {v_report.repo_name} @ {v_report.commit_sha[:12]} -> {v_report.conclusion} "
+                    f"(build={v_report.build_and_test['build']['status']}, "
+                    f"test={v_report.build_and_test['test']['status']}, "
+                    f"readme={counts['executed_pass']} pass / {counts['executed_fail']} fail / "
+                    f"{counts['unverifiable']} unverifiable)"
+                )
+        return rc
 
     return 1
 
