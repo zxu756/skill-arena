@@ -10,7 +10,7 @@ source "${ROOT_DIR}/Scripts/_bootstrap_env.sh"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  Scripts/test.sh scope <graders|sandbox|proxy|extractor|store|cli> [...]
+  Scripts/test.sh scope <graders|sandbox|proxy|extractor|store|cli|verifier> [...]
   Scripts/test.sh milestone <N> [--record]
   Scripts/test.sh release [--record]
 EOF
@@ -70,6 +70,9 @@ case "$MODE" in
           [[ -f tests/test_cli.py ]] && FILES+=("tests/test_cli.py")
           [[ -f tests/test_schedule.py ]] && FILES+=("tests/test_schedule.py")
           K_EXPR+=("version_and_bilingual" "cli_and_html_bilingual")
+          ;;
+        verifier)
+          for f in tests/test_verifier*.py; do [[ -f "$f" ]] && FILES+=("$f"); done
           ;;
         *)
           echo "Unknown scope: $mod" >&2
