@@ -158,6 +158,32 @@ for doc_name, cmds, work_sub in (
     print(f"\n--- Replaying {doc_name} ({len(cmds)} commands) ---")
     workdir = tmp_root / work_sub
     workdir.mkdir(parents=True, exist_ok=True)
+    src_fixtures = repo_root / "tests" / "fixtures"
+    if src_fixtures.is_dir():
+        import shutil
+        dst_fixtures = workdir / "tests" / "fixtures"
+        shutil.rmtree(dst_fixtures, ignore_errors=True)
+        dst_fixtures.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src_fixtures, dst_fixtures)
+
+    verify_sample_repo = tmp_root / f"verify_sample_{work_sub}"
+    if not verify_sample_repo.exists():
+        (verify_sample_repo / "tests").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-C", str(verify_sample_repo), "init", "-b", "main"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(verify_sample_repo), "config", "user.name", "ReadmeVerify"], check=True)
+        subprocess.run(["git", "-C", str(verify_sample_repo), "config", "user.email", "readme@example.invalid"], check=True)
+        (verify_sample_repo / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+        (verify_sample_repo / "adder.py").write_text("def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+        (verify_sample_repo / "tests" / "test_adder.py").write_text(
+            "from adder import add\n\ndef test_add() -> None:\n    assert add(2, 3) == 5\n",
+            encoding="utf-8",
+        )
+        (verify_sample_repo / "README.md").write_text(
+            "# Sample Verify Repo\n\n```bash\npython3 -c \"import adder; assert adder.add(1, 2) == 3\"\n```\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(verify_sample_repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(verify_sample_repo), "commit", "-q", "-m", "init"], check=True)
 
     for idx, cmd in enumerate(cmds, start=1):
         prefix = f"[{doc_name} #{idx}/{len(cmds)}]"
@@ -302,6 +328,31 @@ for doc_name, cmds, work_sub in (
             passed_count += 1
             print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified extracted TaskSpec JSON")
 
+        elif "skill-arena verify" in cmd and "--repo" in cmd:
+            real_cmd = cmd.replace("/path/to/your/repo", str(verify_sample_repo))
+            rc, out = run_cmd(real_cmd, workdir)
+            assert rc == 0, f"{prefix} exited {rc}: {out}"
+            out_md = workdir / ".skill-arena" / "verify-report.md"
+            out_json = workdir / ".skill-arena" / "verify-report.json"
+            assert out_md.is_file(), f"Missing {out_md}"
+            assert out_json.is_file(), f"Missing {out_json}"
+            payload = json.loads(out_json.read_text(encoding="utf-8"))
+            assert payload["conclusion"] == "PASS", payload
+            assert payload["mutation"]["status"] == "PASS" and payload["mutation"]["killed_count"] >= 1, payload
+            passed_count += 1
+            print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified isolated clone + README replay + mutation KILLED")
+
+        elif "skill-arena verify" in cmd and "--self-report" in cmd:
+            rc, out = run_cmd(cmd, workdir)
+            assert rc == 0, f"{prefix} exited {rc}: {out}"
+            out_json = workdir / ".skill-arena" / "self-report-audit.json"
+            assert out_json.is_file(), f"Missing {out_json}"
+            payload = json.loads(out_json.read_text(encoding="utf-8"))
+            assert payload["conclusion"] == "PASS", payload
+            assert payload["self_report"]["summary_counts"]["unsupported"] == 0, payload
+            passed_count += 1
+            print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified verbatim self-report wording audit")
+
         elif cmd.startswith("./Scripts/test.sh scope "):
             if cmd in executed_scopes:
                 skipped_count += 1
@@ -316,7 +367,11 @@ for doc_name, cmds, work_sub in (
                 passed_count += 1
                 print(f"  RUN OK {prefix}: {cmd} -> exit 0, verified pytest passed")
 
-        elif cmd in ("./Scripts/test.sh milestone 0", "./Scripts/test.sh milestone 1"):
+        elif cmd in (
+            "./Scripts/test.sh milestone 0",
+            "./Scripts/test.sh milestone 1",
+            "./Scripts/test.sh milestone 2",
+        ):
             skipped_count += 1
             print(
                 f"  SKIPPED: {cmd} — top-level milestone orchestrator that invokes readme-commands.sh itself "

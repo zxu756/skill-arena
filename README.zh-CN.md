@@ -16,6 +16,7 @@
 6. **Git 历史提交任务提取（`extract-commit`）**（*加固项，`v0.3.0` 起*） - 从本地 Git 缺陷修复提交提取评测任务：提示词中不包含提交标题与正文说明，沙盒仅导出修复前父提交的干净文件树快照（不含修复提交的 `.git` 历史），并自动识别 `pytest` 与 `unittest`（无法唯一判定时要求显式传入 `--test-cmd`）。
 7. **原生中英双语 CLI 与实时切换看板** - 支持 `--lang {auto,zh,en}`、`SKILL_ARENA_LANG` 与 `LC_ALL` / `LANG`（`zh*`）自动识别；使用 `--cli simulate` 时，终端、数据库与导出 HTML 均显著标注 `[SIMULATED / 模拟数据]`。
 8. **为大规模 A/B 设计的实验功能**（*`v0.3.0` 之后加入*） - `pool-export` 把题库（`task.json`、`start/`、`tests/`、`reference/`、`mutants/<名字>/`）转成 TaskSpec JSON，分**可见测试**版（测试放进工作区并受保护）和**隐藏测试**版（工作区里没有测试，判分时才把测试覆盖进干净检出目录；agent 在隐藏测试路径上写的文件会被覆盖，不算作弊），题号加 `@visible` / `@hidden` 后缀。`--arm 名字=路径[,路径...]`（可重复）让多个 skill 分别和始终存在的无技能对照组比较：每组比较给出按题配对的置信区间、按题差值的符号翻转置换检验 p 值（非零差值的题不超过 16 道时精确枚举，否则固定种子抽样 20000 次）和 Holm 校正后的 p 值。试次按随机分块顺序运行（每个 `(题目, 轮次)` 块包含所有组；`--seed`），用 `--workers N` 个线程并行，并记录启动序号和开始、结束时间。每个判分结果带失败原因（`passed`、`wrong`、`interrupted`、`anti_cheat`、`craft`、`infra`、`grader_error`）和完整判分输出（最多 200 KB）；Hallmark 的 `sloplint.mjs` 已随包附带（MIT 许可，见 `graders/vendor/hallmark/NOTICE.txt`；可用 `SKILL_ARENA_SLOPLINT` 换成别的副本），判分结果记录用的是哪一份。报告按组新增：时限曲线 `Pass@T`（通过**且**在 T = 60/120/180/300/600/900 秒和时限内结束）、agent 自写测试的变异得分（在参考实现和每个变异体上运行）、行为指标（跑测试次数、是否先写测试、是否读了 `SKILL.md`；只有 Mistral `vibe` 经 `agent-relay` 运行时留有工具调用记录，其他 CLI 显示 n/a），以及分类别（和分可见性）的按题配对差值。
+9. **仓库与自报确定性验收器（`skill-arena verify`）**（*`v0.3.0` 之后加入*） - 在单次 `mkdtemp` 临时根目录（含 `repo/`、`home/`、`tmp/`、`bin/`）中通过 `git clone --no-local` 创建干净克隆，所有子进程套入 macOS `sandbox-exec`（内核级阻断外网连接并拦写真实家目录，仅放行共用的 `~/.cache/uv`），自动探测构建与基线测试（`0` 条测试判失败）、逐条原样回放根目录 `README` 命令、按固定顺序执行 Python AST / Swift 行级单点破坏性变异反证，并对里程碑自报（`--self-report`）核查绝对化用语是否有同条命令与输出证据；同一仓库同一提交连续运行两次，去掉 `timing_meta` 后的 JSON 报告逐字节相同。
 
 ## 当前限制
 
@@ -106,6 +107,50 @@ uv run skill-arena extract-commit \
   --out tasks/my-regression.json
 ```
 
+## 验收器（skill-arena verify）
+
+`skill-arena verify` 在干净隔离的临时克隆中对目标 Git 仓库及里程碑自报做确定性核查，不采信口头自述：
+
+- **命令与参数**：
+  `uv run skill-arena verify [--lang {auto,zh,en}] [--repo <路径>] [--ref <提交|标签|分支>] [--build-cmd <命令>] [--test-cmd <命令>] [--mutate | --no-mutate] [--max-mutations <N>] [--self-report <md>] [--skip-cmd <模式>] [--timeout-sec <秒>] [--md-out <路径>] [--json-out <路径>]`。仅传 `--self-report` 不传 `--repo` 时单独核查自报文档。
+- **三类仓库检查与自报用语检查**：
+  1. **干净拷贝构建与基线测试**：单次 `mkdtemp` 根目录下建立 `repo/`、`home/`、`tmp/`、`bin/`，以 `git clone --no-local` 克隆指定提交并禁用 `origin` 推送；运行前后各取一次源仓库只读指纹（`HEAD`、`.git/index`、`git status --porcelain=v1 --ignored=matching`、`show-ref`），按项目文件自动探测构建与测试（`uv.lock` -> `uv sync --offline --frozen` + `uv run pytest`；`Package.swift` -> `swift build --disable-sandbox` + `swift test --disable-sandbox`），运行 `0` 条测试判失败，收尾 `finally` 修复只读权限后删除临时目录并回收残留后台进程。
+  2. **根级 `README` 命令逐条回放**：只读取仓库根目录直属 `README*.md`（不递归子目录夹具），双语 `README.md` / `README.zh-CN.md` 并存时校验命令序列一致；可离线执行的命令原样执行并记录退出码与摘要；需网络、密钥、交互会话、常驻服务、Docker、占位符、写用户目录或发版推送的命令标为 `UNVERIFIABLE`（无法验证）并写明原因；未声明前置条件而在干净拷贝中失败的命令判 `FAIL`（可通过 `--skip-cmd` 显式豁免并在报告列出）。
+  3. **单点破坏性变异反证**：按 `(路径, 行, 列)` 固定顺序在非测试源码中生成单点变异（Python `ast` 算子与先通过编译校验的 Swift 行级算子；默认 `1` 处，最多 `--max-mutations` 处），仅当测试以真实断言失败退出才计为 `KILLED`（语法错误、导入错误、收集错误与编译失败均归为 `INVALID`，不算杀死）；变异存活判 `FAIL`，结束后还原原字节并校验测试恢复通过且 `git status --porcelain` 为空。
+  4. **自报用语检查（`--self-report`）**：扫描 10 个绝对化词表（`彻底`、`全部`、`零`、`已修`、`绝不`、`无任何`、`100%`、`never`、`zero`、`completely`），要求同一逻辑条目同时具备可执行命令与输出/退出码证据（`SUPPORTED`），否则标为 `UNSUPPORTED`（无证据，退出码 `1`），并内置 4 条确定性去噪规则（排除 `非零` / `non-zero`、章节标题与 `:` 结尾的表格/列表导语、`不在范围` / `没验证` 小节免责声明、以及引号内被删除/撤回的旧文案）。
+- **断网与家目录隔离规则（含 `~/.cache/uv` 例外）**：
+  验收器启动的每个子进程均包裹在 macOS `/usr/bin/sandbox-exec` 与白名单离线环境中（`HOME`、`TMPDIR`、`XDG_*` 全部指入临时目录，`UV_OFFLINE=1`、`PIP_NO_INDEX=1`，禁用 `http`/`https` Git 传输）。Seatbelt 在内核层拦截外网连接（`deny network*`，仅放行本机 `localhost` 回环与 Unix 域套接字），并拦截对真实账户家目录（`pwd.getpwuid(os.getuid()).pw_dir` 及 `~/Library`）的一切写入——**唯一例外是共用 `<USER_HOME>/.cache/uv`**（避免每次离线 `uv sync` 拷贝十余 GB 缓存），运行前后新增的缓存条目数会统计写入报告（`timing_meta.uv_cache_new_entries`）。
+- **退出码**：
+  全部已启用检查项通过返回 `0`；任一验证项失败（构建/测试失败、`0` 条测试、未写前置条件的 `README` 命令失败、变异存活、残留后台进程、自报存在无证据绝对词）返回 `1`；参数非法、自报文件不存在、目标不是 Git 仓库或源仓库前后指纹不一致返回 `2`。
+
+```bash
+# 1. 在隔离离线克隆中验收 Git 仓库（构建、测试、根级 README 回放与单点变异反证）
+uv run skill-arena verify \
+  --lang zh \
+  --repo /path/to/your/repo \
+  --md-out .skill-arena/verify-report.md \
+  --json-out .skill-arena/verify-report.json
+
+# 2. 离线核查里程碑自报中的无证据绝对化用语（使用仓库自带脱敏样本）
+uv run skill-arena verify \
+  --lang zh \
+  --self-report tests/fixtures/verify_sample_self_report.md \
+  --json-out .skill-arena/self-report-audit.json
+```
+
+### `diy-harness` 实测验收报告摘要（2026-11-21）
+
+测量方法与日期：2026-11-21 由 `./Scripts/acceptance/m2-acceptance.sh`（脱敏记录见 `reports/m2-acceptance.txt`）对 `<USER_HOME>/Projects/diy-harness`（提交 `52207fd803d4`）连续两次执行 `uv run skill-arena --lang zh verify --repo <USER_HOME>/Projects/diy-harness`：
+
+- **退出码与两次运行确定性**：两次均返回退出码 `1`（结论 `FAIL`），去掉 `timing_meta` 后的两份 JSON 逐字节相同（`36,083` 字节，`sha256=b1e6632342a599f9...`），源仓库只读指纹前后一致，临时目录已删除，残留进程数为 `0`。
+- **构建与基线测试**：`uv sync --offline --frozen` 退出码 `0`（**PASS**）；`uv run pytest` 退出码 `0`（**PASS**，`1154 passed, 4 skipped, 2 deselected`）。
+- **根级 `README.md` 回放**：共 `18` 个代码块（Shell 块 `11`、非命令块 `7`），拆出 `58` 条命令——**回放通过 `11` 条**，**回放失败 `2` 条**（仅 `uv run python scripts/sync_prompts.py --check` 退出码 `2` 与 `bash scripts/ci_sim.sh` 退出码 `1`，均因隐含依赖外部 `~/deepagents` 或联网而在干净拷贝中失败并写明原因），**无法验证 `45` 条**（含 `uv tool install --editable .` 标为离线无法验证）。
+- **破坏性变异反证**：**PASS** —— 第 1 处候选 `src/diy_harness/acp.py:L214`（`compare_negate`: `<=` -> `>`）由 `uv run pytest tests/unit_tests/test_acp.py -q` 以断言失败杀死（**KILLED**，退出码 `1`，`3 failed, 57 passed`），还原后测试通过且工作树干净。
+
+```text
+[verify] diy-harness @ 52207fd803d4 -> FAIL (build=PASS, test=PASS, readme=11 pass / 2 fail / 45 unverifiable, mutate=PASS)
+```
+
 ## 内置 8 项工程校准基准任务集（`builtin-8`）
 
 | 任务 ID | 所属领域 | 核心工程不变量考核点 |
@@ -128,8 +173,10 @@ uv run skill-arena extract-commit \
 ./Scripts/test.sh scope extractor
 ./Scripts/test.sh scope store
 ./Scripts/test.sh scope cli
+./Scripts/test.sh scope verifier
 ./Scripts/test.sh milestone 0
 ./Scripts/test.sh milestone 1
+./Scripts/test.sh milestone 2
 ```
 
 ## 开源许可

@@ -16,6 +16,7 @@
 6. **Git Commit Task Extractor (`extract-commit`)** *(Hardened, since `v0.3.0`)* - Extracts a benchmark `TaskSpec` from a historical bug-fix commit: strips commit messages from the prompt, exports a standalone pre-fix tree snapshot without fix-commit Git history, and auto-detects `pytest` vs `unittest` (requiring `--test-cmd` when ambiguous).
 7. **Bilingual CLI & Live Web Switcher** - Supports `--lang {auto,zh,en}`, `SKILL_ARENA_LANG`, and `LC_ALL` / `LANG` (`zh*`) auto-detection across CLI tables, Studio, and single-file HTML exports (`[SIMULATED]` banners included whenever synthetic mode is used).
 8. **Experiment Design for Large A/B Runs** *(added after `v0.3.0`)* - `pool-export` turns a task pool (`task.json`, `start/`, `tests/`, `reference/`, `mutants/<name>/`) into TaskSpec JSON in a **visible** variant (tests in the workspace, protected) and a **hidden** variant (no tests in the workspace; the grader overlays them onto the clean grading checkout, so an agent file at a hidden-test path is overwritten, not counted as tampering); ids get `@visible` / `@hidden`. `--arm LABEL=PATH[,PATH...]` (repeatable) compares several skills against the always-present no-skill control: each comparison gets the task-paired CI, an exact sign-flip permutation p-value on the per-task differences (seeded Monte Carlo with 20000 draws beyond 16 non-zero tasks) and a Holm-adjusted p-value. Trials run in a randomized blocked order (each `(task, rep)` block holds every arm; `--seed`) on `--workers N` threads, with the launch index and start/finish time recorded. Every verdict carries a failure category (`passed`, `wrong`, `interrupted`, `anti_cheat`, `craft`, `infra`, `grader_error`) and the complete grader output (up to 200 KB); the Hallmark `sloplint.mjs` is vendored (MIT, see `graders/vendor/hallmark/NOTICE.txt`; `SKILL_ARENA_SLOPLINT` overrides it) and the verdict names the copy used. Reports add, per arm, a time-limit curve `Pass@T` (passed **and** finished within T = 60/120/180/300/600/900 s and the limit), the mutation score of the tests the agent wrote itself (run against the reference and each mutant), behaviour metrics (test runs, test-first, whether `SKILL.md` was read; only Mistral `vibe` records tool calls through `agent-relay`, other CLIs show n/a), and per-category (and per-variant) task-paired deltas.
+9. **Deterministic Repository & Self-Report Verifier (`skill-arena verify`)** *(added after `v0.3.0`)* - Clones a target Git repository via `git clone --no-local` into a single temporary root (`repo/`, `home/`, `tmp/`, `bin/`), wraps every child process in macOS `sandbox-exec` (blocking outbound internet and real-`HOME` writes except shared `~/.cache/uv`), runs auto-detected build and baseline tests (`0` tests executed counts as failure), replays root-level `README` commands verbatim, runs deterministic single-point AST/Swift destructive mutations to confirm tests actually fail on broken code, and audits milestone self-reports (`--self-report`) for unsupported absolute claims; two runs on the same commit yield byte-identical JSON once `timing_meta` is stripped.
 
 ## Current Limitations
 
@@ -106,6 +107,50 @@ uv run skill-arena extract-commit \
   --out tasks/my-regression.json
 ```
 
+## Repository Verifier (`skill-arena verify`)
+
+`skill-arena verify` verifies a Git repository and/or a milestone self-report deterministically without trusting author narratives:
+
+- **Command & Parameters**:
+  `uv run skill-arena verify [--lang {auto,zh,en}] [--repo <path>] [--ref <sha|tag|branch>] [--build-cmd <cmd>] [--test-cmd <cmd>] [--mutate | --no-mutate] [--max-mutations <N>] [--self-report <md>] [--skip-cmd <pattern>] [--timeout-sec <sec>] [--md-out <path>] [--json-out <path>]`. Passing `--self-report` without `--repo` audits the Markdown report standalone.
+- **Three Repository Checks & Self-Report Wording Audit**:
+  1. **Clean-Clone Build & Baseline Tests**: Stages `repo/`, `home/`, `tmp/`, and `bin/` inside a single `mkdtemp` root via `git clone --no-local`, disables push to `origin`, compares read-only fingerprints (`HEAD`, `.git/index`, `git status --porcelain=v1 --ignored=matching`, `show-ref`) of the source repository before and after execution, auto-detects build/test commands from project files (`uv.lock` -> `uv sync --offline --frozen` + `uv run pytest`; `Package.swift` -> `swift build --disable-sandbox` + `swift test --disable-sandbox`), rejects `0`-test runs, cleans read-only files in `finally`, and reaps leaked background processes.
+  2. **Root `README` Command Replay**: Scans only root-level `README*.md` files (never recursing into subdirectory fixtures), verifies bilingual `README.md` / `README.zh-CN.md` command parity, executes offline-verifiable shell commands verbatim, classifies network/API-key/interactive/daemon/Docker/placeholder/user-home/release commands as `UNVERIFIABLE` with explicit reasons, and marks unstated-precondition failures as `FAIL` (unless explicitly exempted via `--skip-cmd`, disclosed in the report).
+  3. **Destructive Single-Point Mutation Check**: Generates deterministic `(path, line, col)`-ordered single-point mutations on non-test source files (Python `ast` operators and pre-built Swift line operators; default `1`, up to `--max-mutations`), counting only genuine test assertion failures as `KILLED` (syntax, import, collection, and compile errors are `INVALID`, never counted as killed). Surviving mutations fail verification; original bytes are restored and verified clean (`git status --porcelain` empty).
+  4. **Self-Report Wording Audit (`--self-report`)**: Scans the 10-term absolute-claim vocabulary (`彻底`, `全部`, `零`, `已修`, `绝不`, `无任何`, `100%`, `never`, `zero`, `completely`), requiring same-item runnable command + output/exit-code evidence (`SUPPORTED`) and flagging unsupported claims as `UNSUPPORTED` (exit `1`), with 4 deterministic denoising rules (`非零` / `non-zero`, headings & `:` table/list lead-ins, `不在范围` / `没验证` scope disclaimers, and quoted deleted/retracted legacy copy).
+- **Offline & `HOME` Isolation Rules (Including the `~/.cache/uv` Exception)**:
+  Every child subprocess runs under macOS `/usr/bin/sandbox-exec` with an allowlisted offline environment (`HOME`, `TMPDIR`, and `XDG_*` inside the temporary workspace, `UV_OFFLINE=1`, `PIP_NO_INDEX=1`, HTTP/HTTPS Git transports disabled). Outbound internet connections are blocked by Seatbelt (`deny network*`, allowing only `localhost` loopback and Unix sockets). Writes to the real account `HOME` (`pwd.getpwuid(os.getuid()).pw_dir`, including `~/Library`) are blocked by `sandbox-exec` **except `<USER_HOME>/.cache/uv`**, which is shared so offline `uv sync` avoids cloning gigabytes of wheel caches per run; newly added entries under `~/.cache/uv` are counted and reported in `timing_meta.uv_cache_new_entries`.
+- **Exit Codes**:
+  `0` when all enabled verification checks pass; `1` when any verification check fails (build/test failure, `0` tests executed, unstated-precondition `README` command failure, surviving mutation, leaked process, or unsupported wording); `2` on invalid arguments, missing self-report file, non-Git target directory, or source repository fingerprint mismatch.
+
+```bash
+# 1. Verify a Git repository in an isolated offline clone (build, tests, root README replay, and mutation check)
+uv run skill-arena verify \
+  --lang en \
+  --repo /path/to/your/repo \
+  --md-out .skill-arena/verify-report.md \
+  --json-out .skill-arena/verify-report.json
+
+# 2. Audit a milestone self-report offline for unsupported absolute claims (bundled sanitized sample)
+uv run skill-arena verify \
+  --lang en \
+  --self-report tests/fixtures/verify_sample_self_report.md \
+  --json-out .skill-arena/self-report-audit.json
+```
+
+### Measured `diy-harness` Verification Summary (2026-11-21)
+
+Measured via `./Scripts/acceptance/m2-acceptance.sh` (`reports/m2-acceptance.txt`, 2026-11-21) running `uv run skill-arena --lang zh verify --repo <USER_HOME>/Projects/diy-harness` twice consecutively against commit `52207fd803d4`:
+
+- **Exit code & determinism**: Both runs exited `1` (`FAIL`) and produced byte-identical JSON (`36,083` bytes after stripping `timing_meta`, `sha256=b1e6632342a599f9...`), with source fingerprint unchanged, temporary clone deleted, and `0` leaked processes.
+- **Build & baseline tests**: `uv sync --offline --frozen` exited `0` (**PASS**); `uv run pytest` exited `0` (**PASS**, `1154 passed, 4 skipped, 2 deselected`).
+- **Root `README.md` replay**: `18` fenced blocks (`11` shell blocks, `7` non-command blocks) -> `58` commands total: **`11` passed**, **`2` failed** (`uv run python scripts/sync_prompts.py --check` exit `2` and `bash scripts/ci_sim.sh` exit `1`, both due to unstated external `~/deepagents` / network preconditions), **`45` unverifiable** (including `uv tool install --editable .` classified as offline-unverifiable).
+- **Destructive mutation**: **PASS** — candidate #1 `src/diy_harness/acp.py:L214` (`compare_negate`: `<=` -> `>`) **KILLED** by `uv run pytest tests/unit_tests/test_acp.py -q` (exit `1`, `3 failed, 57 passed`), restored with tests passing and clean worktree.
+
+```text
+[verify] diy-harness @ 52207fd803d4 -> FAIL (build=PASS, test=PASS, readme=11 pass / 2 fail / 45 unverifiable, mutate=PASS)
+```
+
 ## Built-In 8-Task Calibration Suite
 
 | Task ID | Domain | Engineering Invariant Tested |
@@ -128,8 +173,10 @@ uv run skill-arena extract-commit \
 ./Scripts/test.sh scope extractor
 ./Scripts/test.sh scope store
 ./Scripts/test.sh scope cli
+./Scripts/test.sh scope verifier
 ./Scripts/test.sh milestone 0
 ./Scripts/test.sh milestone 1
+./Scripts/test.sh milestone 2
 ```
 
 ## License

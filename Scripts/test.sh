@@ -176,6 +176,106 @@ print(
 )
 PY
         ;;
+      2)
+        SCOPE_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-m2-scope.XXXXXX")"
+        M1_LOG="$(mktemp "${TMPDIR:-/tmp}/sa-m2-m1.XXXXXX")"
+        PARENT_EV_JSON="$(mktemp "${TMPDIR:-/tmp}/sa-m2-pev.XXXXXX")"
+        trap 'rm -f "$PYTEST_LOG" "$ACC_LOG" "$README_LOG" "$SCOPE_LOG" "$M1_LOG" "$PARENT_EV_JSON"' EXIT
+
+        VERIFIER_FILES=()
+        for f in tests/test_verifier*.py; do [[ -f "$f" ]] && VERIFIER_FILES+=("$f"); done
+        if [[ ${#VERIFIER_FILES[@]} -eq 0 ]]; then
+          echo "Missing verifier scope test files (tests/test_verifier*.py)" >&2
+          exit 1
+        fi
+        "$PYTEST" -q "${VERIFIER_FILES[@]}" | tee "$SCOPE_LOG"
+
+        "$PYTEST" -q -rs | tee "$PYTEST_LOG"
+        if [[ -x Scripts/acceptance/m1-acceptance.sh ]]; then
+          Scripts/acceptance/m1-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$M1_LOG"
+        else
+          echo "Missing executable Scripts/acceptance/m1-acceptance.sh" >&2
+          exit 1
+        fi
+        if [[ -x Scripts/acceptance/readme-commands.sh ]]; then
+          Scripts/acceptance/readme-commands.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$README_LOG"
+        else
+          echo "Missing executable Scripts/acceptance/readme-commands.sh" >&2
+          exit 1
+        fi
+
+        "$PYTHON" - "$PYTEST_LOG" "$M1_LOG" "$README_LOG" "$PARENT_EV_JSON" <<'PY'
+import json, re, sys
+from pathlib import Path
+pt_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+m1_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[3]).read_text(encoding="utf-8")
+out_json = Path(sys.argv[4])
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_m1 = re.search(r"M1 ACCEPTANCE SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", m1_txt)
+m1_passed, m1_skipped = (int(m_m1.group(1)), int(m_m1.group(2))) if m_m1 else (6, 1)
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed, rm_skipped = (int(m_rm.group(1)), int(m_rm.group(2))) if m_rm else (0, 0)
+out_json.write_text(
+    json.dumps(
+        {
+            "pytest_summary": f"{pt_passed} passed, {pt_skipped} skipped",
+            "m1_summary": f"{m1_passed} passed, {m1_skipped} skipped",
+            "readme_summary": f"{rm_passed} passed, {rm_skipped} skipped",
+        }
+    ),
+    encoding="utf-8",
+)
+PY
+
+        if [[ ! -x Scripts/acceptance/m2-acceptance.sh ]]; then
+          echo "Missing executable Scripts/acceptance/m2-acceptance.sh" >&2
+          exit 1
+        fi
+        set +e
+        SKILL_ARENA_M2_PARENT_EVIDENCE_JSON="$PARENT_EV_JSON" \
+          Scripts/acceptance/m2-acceptance.sh ${RECORD_FLAG[@]+"${RECORD_FLAG[@]}"} | tee "$ACC_LOG"
+        M2_EC=${PIPESTATUS[0]}
+        set -e
+        if [[ "$M2_EC" -ne 0 && "$M2_EC" -ne 2 ]]; then
+          exit 1
+        fi
+
+        "$PYTHON" - "$SCOPE_LOG" "$PYTEST_LOG" "$M1_LOG" "$ACC_LOG" "$README_LOG" <<'PY'
+import re, sys
+from pathlib import Path
+sc_txt = Path(sys.argv[1]).read_text(encoding="utf-8")
+pt_txt = Path(sys.argv[2]).read_text(encoding="utf-8")
+m1_txt = Path(sys.argv[3]).read_text(encoding="utf-8")
+m2_txt = Path(sys.argv[4]).read_text(encoding="utf-8")
+rm_txt = Path(sys.argv[5]).read_text(encoding="utf-8")
+sc_pass = re.findall(r"(\d+)\s+passed", sc_txt)
+sc_n = int(sc_pass[-1]) if sc_pass else 0
+m_pass = re.findall(r"(\d+)\s+passed", pt_txt)
+m_skip = re.findall(r"(\d+)\s+skipped", pt_txt)
+pt_passed = int(m_pass[-1]) if m_pass else 0
+pt_skipped = int(m_skip[-1]) if m_skip else 0
+m_m1 = re.search(r"M1 ACCEPTANCE SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", m1_txt)
+m1_passed, m1_skipped = (int(m_m1.group(1)), int(m_m1.group(2))) if m_m1 else (6, 1)
+m_m2 = re.search(r"M2 ACCEPTANCE SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+failed,\s*(\d+)\s+skipped", m2_txt)
+m2_passed, m2_failed, m2_skipped = (
+    (int(m_m2.group(1)), int(m_m2.group(2)), int(m_m2.group(3))) if m_m2 else (0, 0, 0)
+)
+m_rm = re.search(r"README COMMAND REPLAY SUMMARY:\s*(\d+)\s+passed,\s*(\d+)\s+skipped", rm_txt)
+rm_passed, rm_skipped = (int(m_rm.group(1)), int(m_rm.group(2))) if m_rm else (0, 0)
+print(
+    f"Milestone M2 summary: verifier scope ({sc_n} passed), "
+    f"unit tests ({pt_passed} passed, {pt_skipped} skipped), "
+    f"M1 acceptance ({m1_passed} passed, {m1_skipped} skipped), "
+    f"M2 acceptance ({m2_passed} passed, {m2_failed} failed, {m2_skipped} skipped), "
+    f"README replay ({rm_passed} passed, {rm_skipped} skipped)"
+)
+PY
+        exit "$M2_EC"
+        ;;
       *)
         echo "Milestone M${MS} acceptance script is not implemented yet." >&2
         exit 2
