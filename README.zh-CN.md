@@ -120,6 +120,8 @@ uv run skill-arena extract-commit \
   4. **自报用语检查（`--self-report`）**：扫描 10 个绝对化词表（`彻底`、`全部`、`零`、`已修`、`绝不`、`无任何`、`100%`、`never`、`zero`、`completely`），要求同一逻辑条目同时具备可执行命令与输出/退出码证据（`SUPPORTED`），否则标为 `UNSUPPORTED`（无证据，退出码 `1`），并内置 4 条确定性去噪规则（排除 `非零` / `non-zero`、章节标题与 `:` 结尾的表格/列表导语、`不在范围` / `没验证` 小节免责声明、以及引号内被删除/撤回的旧文案）。
 - **断网与家目录隔离规则（含 `~/.cache/uv` 例外）**：
   验收器启动的每个子进程均包裹在 macOS `/usr/bin/sandbox-exec` 与白名单离线环境中（`HOME`、`TMPDIR`、`XDG_*` 全部指入临时目录，`UV_OFFLINE=1`、`PIP_NO_INDEX=1`，禁用 `http`/`https` Git 传输）。Seatbelt 在内核层拦截外网连接（`deny network*`，仅放行本机 `localhost` 回环与 Unix 域套接字），并拦截对真实账户家目录（`pwd.getpwuid(os.getuid()).pw_dir` 及 `~/Library`）的一切写入——**唯一例外是共用 `<USER_HOME>/.cache/uv`**（避免每次离线 `uv sync` 拷贝十余 GB 缓存），运行前后新增的缓存条目数会统计写入报告（`timing_meta.uv_cache_new_entries`）。
+- **比较前的确定性规整规则**：
+  易变的真实耗时与 `~/.cache/uv` 缓存条目增量单独归入顶层 `timing_meta`；其余报告字段由 `PathScrubber` 与 `summarize_command_output` 剥离 ANSI 转义序列、脱敏临时目录与源仓/用户路径（`<TMP_REPO>`、`<TMP_HOME>`、`<TMPDIR>`、`<TMP_ROOT>`、`<REPO_ROOT>`、`<USER_HOME>`）、将命令输出摘要中的内联耗时（`in 9.87s`、`in 102.31s (0:01:42)`、`in 9.87 seconds`、`Ran N tests in 0.003s`、`finished in 0.01s`、`after 0.004 seconds`、`in 0.01 (0.02) seconds`）替换为 `<TIME>`，并在摘要长度截断前把 `pytest` 按行宽补齐等号的最终汇总行统一规整为两侧各三个等号的固定形式（`=== <汇总> in <TIME> ===`），同时保持测试名、点号进度行、分节标题与失败报错信息原样不动。
 - **退出码**：
   全部已启用检查项通过返回 `0`；任一验证项失败（构建/测试失败、`0` 条测试、未写前置条件的 `README` 命令失败、变异存活、残留后台进程、自报存在无证据绝对词）返回 `1`；参数非法、自报文件不存在、目标不是 Git 仓库或源仓库前后指纹不一致返回 `2`。
 
@@ -142,7 +144,7 @@ uv run skill-arena verify \
 
 测量方法与日期：2026-11-21 由 `./Scripts/acceptance/m2-acceptance.sh`（脱敏记录见 `reports/m2-acceptance.txt`）对 `<USER_HOME>/Projects/diy-harness`（提交 `52207fd803d4`）连续两次执行 `uv run skill-arena --lang zh verify --repo <USER_HOME>/Projects/diy-harness`：
 
-- **退出码与两次运行确定性**：两次均返回退出码 `1`（结论 `FAIL`），去掉 `timing_meta` 后的两份 JSON 逐字节相同（`36,083` 字节，`sha256=b1e6632342a599f9...`），源仓库只读指纹前后一致，临时目录已删除，残留进程数为 `0`。
+- **退出码与两次运行确定性**：两次均返回退出码 `1`（结论 `FAIL`），去掉 `timing_meta` 后的两份 JSON 逐字节相同（`36,031` 字节，`sha256=db7a3bd1ad5a6420...`），源仓库只读指纹前后一致，临时目录已删除，残留进程数为 `0`。
 - **构建与基线测试**：`uv sync --offline --frozen` 退出码 `0`（**PASS**）；`uv run pytest` 退出码 `0`（**PASS**，`1154 passed, 4 skipped, 2 deselected`）。
 - **根级 `README.md` 回放**：共 `18` 个代码块（Shell 块 `11`、非命令块 `7`），拆出 `58` 条命令——**回放通过 `11` 条**，**回放失败 `2` 条**（仅 `uv run python scripts/sync_prompts.py --check` 退出码 `2` 与 `bash scripts/ci_sim.sh` 退出码 `1`，均因隐含依赖外部 `~/deepagents` 或联网而在干净拷贝中失败并写明原因），**无法验证 `45` 条**（含 `uv tool install --editable .` 标为离线无法验证）。
 - **破坏性变异反证**：**PASS** —— 第 1 处候选 `src/diy_harness/acp.py:L214`（`compare_negate`: `<=` -> `>`）由 `uv run pytest tests/unit_tests/test_acp.py -q` 以断言失败杀死（**KILLED**，退出码 `1`，`3 failed, 57 passed`），还原后测试通过且工作树干净。
