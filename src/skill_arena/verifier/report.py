@@ -17,10 +17,44 @@ _USER_SYSTEM_PATH_RE = re.compile(r"/(?:Users|home)/[^\s/\"':;),\]}]+")
 # Scrub volatile inline timing numbers inside tool summaries so JSON outside `timing_meta` stays byte-identical
 _INLINE_TIMING_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bin\s+\d+\.\d+\s*\(\d+\.\d+\)\s*seconds\b", re.IGNORECASE), "in <TIME>"),
-    (re.compile(r"\bfinished\s+in\s+\d+(?:\.\d+)?s\b", re.IGNORECASE), "finished in <TIME>"),
+    (re.compile(r"\bfinished\s+in\s+\d+(?:\.\d+)?(?:ms|s|\s+seconds)\b", re.IGNORECASE), "finished in <TIME>"),
     (re.compile(r"\bafter\s+\d+(?:\.\d+)?\s*seconds\b", re.IGNORECASE), "after <TIME>"),
-    (re.compile(r"\bin\s+\d+(?:\.\d+)?(?:ms|s)\b(?:\s*\(\d+:\d{2}:\d{2}\))?"), "in <TIME>"),
+    (re.compile(r"\bin\s+\d+(?:\.\d+)?(?:ms|s|\s+seconds)\b(?:\s*\(\d+:\d{2}:\d{2}\))?"), "in <TIME>"),
 )
+
+_PYTEST_STATUS_LABEL = (
+    r"(?:failed|passed|skipped|deselected|xfailed|xpassed|warnings?|errors?|reruns?|flaky|selected"
+    r"|subtests?(?:\s+(?:passed|failed|skipped))?"
+    r"|tests?\s+collected(?:\s*\(\d+\s+deselected\))?)"
+)
+_PYTEST_SUMMARY_CLAUSE = (
+    rf"(?:\d+(?:/\d+)?\s+{_PYTEST_STATUS_LABEL}"
+    r"|no\s+tests\s+(?:ran|collected)(?:\s*\(\d+\s+deselected\))?)"
+)
+# Normalize pytest-style `=== ... in <TIME> ===` summary banners whose `=` padding varies with duration string width
+_PYTEST_SUMMARY_BANNER_RE = re.compile(
+    rf"(?:^|(?<=\n)|(?<= \| ))[ \t]*=+[ \t]+"
+    rf"(?P<summary>{_PYTEST_SUMMARY_CLAUSE}(?:,\s*{_PYTEST_SUMMARY_CLAUSE})*\s+in\s+<TIME>)"
+    rf"[ \t]*=+[ \t]*(?=\r?\n| \| |$)"
+)
+
+
+def strip_ansi_escapes(text: str) -> str:
+    """Remove ANSI CSI escape sequences from command output."""
+    if not text:
+        return ""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def normalize_inline_timings(text: str) -> str:
+    """Replace volatile inline timing tokens with `<TIME>` and normalize pytest `=`-padded summary banners."""
+    if not text:
+        return ""
+    cleaned = text
+    for pattern, repl in _INLINE_TIMING_PATTERNS:
+        cleaned = pattern.sub(repl, cleaned)
+    cleaned = _PYTEST_SUMMARY_BANNER_RE.sub(r"=== \g<summary> ===", cleaned)
+    return cleaned
 
 
 class PathScrubber:
@@ -82,8 +116,7 @@ class PathScrubber:
         cleaned = _TMP_SYSTEM_PATH_RE.sub("<TMPDIR>", cleaned)
         cleaned = _USER_SYSTEM_PATH_RE.sub("<USER_HOME>", cleaned)
         if scrub_inline_timings:
-            for pattern, repl in _INLINE_TIMING_PATTERNS:
-                cleaned = pattern.sub(repl, cleaned)
+            cleaned = normalize_inline_timings(cleaned)
         return cleaned
 
 

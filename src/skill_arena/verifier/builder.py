@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from skill_arena.verifier.env_guard import CommandRunResult, run_verified_command
+from skill_arena.verifier.report import normalize_inline_timings, strip_ansi_escapes
 
 _UNITTEST_RAN_RE = re.compile(r"\bRan\s+(\d+)\s+tests?\s+in\b")
 _PYTEST_ZERO_RE = re.compile(r"\b(?:no tests ran|collected\s+0\s+items)\b", re.IGNORECASE)
@@ -194,11 +195,12 @@ def detect_zero_tests_ran(test_command: str, exit_code: int, combined_out: str) 
 
 def summarize_command_output(output: str, max_lines: int = 6, max_chars: int = 500) -> str:
     """Extract a concise, deterministic tail summary from command output."""
-    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    cleaned_out = strip_ansi_escapes(output)
+    lines = [ln.strip() for ln in cleaned_out.splitlines() if ln.strip()]
     if not lines:
         return ""
     selected = lines[-max_lines:]
-    joined = " | ".join(selected)
+    joined = normalize_inline_timings(" | ".join(selected))
     if len(joined) > max_chars:
         return joined[-max_chars:]
     return joined
