@@ -1,6 +1,6 @@
 ================================================================
 SkillArena Milestone M1 Acceptance Suite (Isolated HOME + relay.sh + agent-xray + 95% CI)
-Workspace: <REPO_ROOT> (branch: main)
+Workspace: <REPO_ROOT> (branch: m2/verifier)
 ================================================================
 
 [Row 1/7] Per-trial isolated HOME & skill directories (Control=0 skills, Treatment=only candidate)...
@@ -10,16 +10,16 @@ Workspace: <REPO_ROOT> (branch: main)
   ROW 2 [PASS]: Stub wrote 2x kr1_probe_<uuid> markers inside isolated HOME (.claude/*.marker & .agents/skills/*/SKILL.md verified True during trial); 0 markers in real ~/.claude or ~/.agents/skills; pinned agent-xray=3cd9b14dcb; relay.sh status=ok, relay_cost=$0.0150, agent-xray tokens=(300+100 in, 60 out), .relay cleaned.
 
 [Row 3/7] Fake SSE upstream emitting 1 event every 200ms (TTFT error <= 50ms)...
-  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[205.77, 210.09, 205.93, 205.87, 206.02], actual_first_chunk_ms=[203.9, 207.47, 205.14, 205.12, 205.13], min_abs_err=0.75ms, median_abs_err=0.89ms, max_abs_err=2.61ms (<= 50.0 ms), total_stream_ms=[1018, 1016, 1022, 1019, 1019]
+  ROW 3 [PASS]: 5x 5-event SSE streams @ 200ms cadence -> recorded_ttft_ms=[211.79, 210.84, 210.75, 210.77, 210.75], actual_first_chunk_ms=[210.2, 210.13, 210.11, 210.16, 210.15], min_abs_err=0.60ms, median_abs_err=0.64ms, max_abs_err=1.60ms (<= 50.0 ms), total_stream_ms=[1034, 1037, 1030, 1044, 1042]
 
 [Row 4/7] OpenAI Responses API (/v1/responses) streaming SSE & non-streaming JSON usage...
   ROW 4 [PASS]: /v1/responses streaming SSE & non-streaming JSON both recorded exact uncached_input=400, cached_input=800, total_prompt=1200, output=150, cost_usd=$0.002100.
 
 [Row 5/7] Equal pass rate across 20 trials per arm (40 trials via relay.sh) -> '看不出差别' / 'Inconclusive'...
-  ROW 5 [PASS]: 20 vs 20 equal-rate trials (10/20 vs 10/20) -> delta=+0.0000, 95% Newcombe-Wilson CI=[-0.2838, +0.2838], verdict='inconclusive' ('看不出差别' / 'Inconclusive'), winner=None, ranks=[None, None], HTML craft 0 warnings.
+  ROW 5 [PASS]: 20 vs 20 equal-rate trials (10/20 vs 10/20) -> delta=+0.0000, 95% task-paired CI=[-0.2955, +0.2955], verdict='inconclusive' ('看不出差别' / 'Inconclusive'), winner=None, ranks=[None, None], HTML craft 0 warnings.
 
 [Part 2 / K13] Detached double-fork + setsid + close-fds + chdir('/') check under isolated HOME...
-  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [49501, 49604] killed, recorded in leaked_processes, and trials marked FAILED (4.87s).
+  PART2-K13 [PASS]: Under isolated HOME, double-fork daemons [21677, 21766] killed, recorded in leaked_processes, and trials marked FAILED (2.82s).
 
 [Row 6/7] Live 8-task real-agent A/B gate (SKILL_ARENA_REAL_AB)...
   SKIPPED (没跑): SKILL_ARENA_REAL_AB!=1; live paid 8-task real-agent A/B requires explicit user approval and API budget.
@@ -30,7 +30,7 @@ Workspace: <REPO_ROOT> (branch: main)
   Mutation M1-2 (fail to strip outer RELAY_WORKER before relay.sh) -> FAILED tests/test_sandbox.py::test_relay_sh_integration_parses_log_md_strips_relay_worker_and_cleans_workspace (exit 1) & restored clean (git status empty, test GREEN).
   Mutation M1-3 (report buffered total latency instead of streaming TTFT) -> FAILED tests/test_proxy.py::test_xray_bridge_streaming_sse_ttft_within_50ms (exit 1) & restored clean (git status empty, test GREEN).
   Mutation M1-4 (drop cached_tokens from OpenAI Responses usage) -> FAILED tests/test_proxy.py::test_xray_bridge_openai_responses_api_streaming_and_json_usage (exit 1) & restored clean (git status empty, test GREEN).
-  Mutation M1-5 (rank winner without Newcombe-Wilson CI spans-zero check) -> FAILED tests/test_store.py::test_newcombe_wilson_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner (exit 1) & restored clean (git status empty, test GREEN).
+  Mutation M1-5 (rank winner without task-paired CI spans-zero check) -> FAILED tests/test_store.py::test_paired_ci_20_vs_20_equal_rates_is_inconclusive_with_no_winner (exit 1) & restored clean (git status empty, test GREEN).
   Mutation M1-KR2a (disable cumulative --budget-usd pre-trial halt) -> FAILED tests/test_cli.py::test_kr2_experiment_wide_budget_ceiling_stops_before_exceeding_budget (exit 1) & restored clean (git status empty, test GREEN).
   Mutation M1-KR2b (return exit 0 instead of EXIT_BUDGET_EXCEEDED on budget halt) -> FAILED tests/test_cli.py::test_kr8_budget_halt_returns_dedicated_exit_code_and_discloses_first_trial_overrun (exit 1) & restored clean (git status empty, test GREEN).
   Mutation M1-KR4 (bypass child env allowlist and inherit SSH_AUTH_SOCK / CLAUDE_CODE_*) -> FAILED tests/test_sandbox.py::test_kr4_strict_child_env_allowlist_blocks_ssh_claude_code_and_host_secrets (exit 1) & restored clean (git status empty, test GREEN).

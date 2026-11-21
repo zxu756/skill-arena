@@ -1,6 +1,6 @@
 ================================================================
 SkillArena Milestone M0 Acceptance Suite (Stub Agents Only)
-Workspace: <REPO_ROOT> (branch: m1/real)
+Workspace: <REPO_ROOT> (branch: m2/verifier)
 ================================================================
 
 [Row 1/8] --cli simulate outputs SIMULATED in CLI/DB/HTML, fabricated title & screenshots absent...
