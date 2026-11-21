@@ -33,6 +33,16 @@ from skill_arena.verifier.report import (
     render_verify_json,
     render_verify_markdown,
 )
+from skill_arena.verifier.row3_diagnostics import (
+    FLAKY_TARGET_TEST_NOTE,
+    JsonFieldDiff,
+    Row3ComparisonResult,
+    diff_json_values,
+    evaluate_row3_runs,
+    is_only_target_test_diffs,
+    resolve_default_evidence_dir,
+    truncate_diff_value,
+)
 from skill_arena.verifier.runner import VerifyOptions, run_verify
 from skill_arena.verifier.wording_audit import (
     KEYWORD_SPECS,
@@ -44,12 +54,15 @@ from skill_arena.verifier.wording_audit import (
 
 __all__ = [
     "CommandRunResult",
+    "FLAKY_TARGET_TEST_NOTE",
+    "JsonFieldDiff",
     "KEYWORD_SPECS",
     "MutationCandidate",
     "MutationRecord",
     "MutationSummary",
     "PathScrubber",
     "RepoFingerprint",
+    "Row3ComparisonResult",
     "VerifyInputError",
     "VerifyOptions",
     "VerifyReport",
@@ -63,16 +76,21 @@ __all__ = [
     "cleanup_temp_workspace",
     "clone_clean_repo",
     "create_verify_workspace",
+    "diff_json_values",
     "discover_mutation_candidates",
     "evaluate_mutation_candidate",
+    "evaluate_row3_runs",
+    "is_only_target_test_diffs",
     "render_verify_json",
     "render_verify_markdown",
     "repo_fingerprint",
+    "resolve_default_evidence_dir",
     "run_mutation_verification",
     "run_verified_command",
     "run_verify",
     "sandbox_exec_available",
     "snapshot_uv_cache_entries",
     "split_markdown_logical_items",
+    "truncate_diff_value",
     "validate_git_repo_and_resolve_ref",
 ]

@@ -10,7 +10,7 @@ source "${ROOT_DIR}/Scripts/_bootstrap_env.sh"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  Scripts/acceptance/m2-acceptance.sh [--record] [--mutation <1|2|3|4|all>] [--all-rows] [--only-row <1|2|3|4|5|6|7|9>]
+  Scripts/acceptance/m2-acceptance.sh [--record] [--mutation <1|2|3|4|all>] [--all-rows] [--only-row <1|2|3|4|5|6|7|9>] [--evidence-dir <dir>]
 EOF
   exit 2
 }
@@ -19,6 +19,7 @@ RECORD=0
 MUTATION_ARG=""
 ALL_ROWS=0
 ONLY_ROW=""
+EVIDENCE_DIR="${SKILL_ARENA_M2_EVIDENCE_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,6 +47,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --only-row=*)
       ONLY_ROW="${1#*=}"
+      shift
+      ;;
+    --evidence-dir)
+      [[ $# -ge 2 && -n "$2" ]] || usage
+      EVIDENCE_DIR="$2"
+      shift 2
+      ;;
+    --evidence-dir=*)
+      EVIDENCE_DIR="${1#*=}"
+      [[ -n "$EVIDENCE_DIR" ]] || usage
       shift
       ;;
     -h|--help)
@@ -91,7 +102,7 @@ cleanup() {
 trap cleanup EXIT
 
 run_m2_driver() {
-  "$PYTHON" - "$ROOT_DIR" "$TMP_WORK" "$MUTATION_ARG" "$ALL_ROWS" "$ONLY_ROW" <<'PY'
+  "$PYTHON" - "$ROOT_DIR" "$TMP_WORK" "$MUTATION_ARG" "$ALL_ROWS" "$ONLY_ROW" "$EVIDENCE_DIR" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -113,6 +124,8 @@ tmp_work = Path(sys.argv[2]).resolve()
 mutation_arg = sys.argv[3].strip()
 all_rows_flag = sys.argv[4].strip() == "1"
 only_row_arg = sys.argv[5].strip()
+evidence_dir_arg = sys.argv[6].strip() if len(sys.argv) > 6 else ""
+explicit_evidence_dir = Path(evidence_dir_arg).expanduser() if evidence_dir_arg else None
 
 target_root = Path(os.environ.get("SKILL_ARENA_M2_TARGET_ROOT") or str(root_dir)).resolve()
 target_src = (target_root / "src").resolve()
@@ -136,6 +149,7 @@ assert skill_arena.__file__ is not None and os.path.realpath(skill_arena.__file_
 
 from skill_arena.cli import main as cli_main
 from skill_arena.verifier.env_guard import repo_fingerprint, snapshot_uv_cache_entries
+from skill_arena.verifier.row3_diagnostics import evaluate_row3_runs
 
 pw_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
@@ -605,36 +619,21 @@ def execute_rows_2_and_3(*, want_row2: bool, want_row3: bool) -> None:
                 )
 
     if want_row3:
-        if not r1_json.is_file() or not r2_json.is_file():
-            record_row(3, "FAIL", f"缺少两次运行 JSON 输出（rc1={rc1}, rc2={rc2}）")
+        row3_res = evaluate_row3_runs(
+            rc1=rc1,
+            rc2=rc2,
+            run1_json=r1_json,
+            run2_json=r2_json,
+            run1_md=r1_md,
+            run2_md=r2_md,
+            evidence_dir=explicit_evidence_dir,
+        )
+        if row3_res.passed:
+            record_row(3, "PASS", row3_res.summary_message)
         else:
-            raw1 = r1_json.read_text(encoding="utf-8")
-            raw2 = r2_json.read_text(encoding="utf-8")
-            p1 = json.loads(raw1)
-            p2 = json.loads(raw2)
-            p1.pop("timing_meta", None)
-            p2.pop("timing_meta", None)
-            b1 = (json.dumps(p1, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-            b2 = (json.dumps(p2, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-            marker = '  "timing_meta":'
-            prefix_same = (
-                marker in raw1
-                and marker in raw2
-                and raw1.split(marker, 1)[0].encode("utf-8") == raw2.split(marker, 1)[0].encode("utf-8")
-            )
-            if rc1 == rc2 and b1 == b2 and prefix_same:
-                sha = hashlib.sha256(b1).hexdigest()[:16]
-                record_row(
-                    3,
-                    "PASS",
-                    f"diy-harness 连续两次运行退出码一致（{rc1} == {rc2}），两份 JSON 去掉 timing_meta 后逐字节相同（{len(b1)} 字节，sha256={sha}...）",
-                )
-            else:
-                record_row(
-                    3,
-                    "FAIL",
-                    f"两次运行输出不一致（rc1={rc1}, rc2={rc2}, canonical_equal={b1 == b2}, prefix_equal={prefix_same}）",
-                )
+            record_row(3, "FAIL", row3_res.summary_message)
+            for diff_line in row3_res.diff_lines:
+                print(diff_line, flush=True)
 
 
 def execute_row_4() -> None:
